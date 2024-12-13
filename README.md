@@ -7,7 +7,9 @@ This repo contains my study notes based exclusively from the book [Build A Large
 | Chapter | Link |
 | --- | --- |
 | **Chapter 1** Understanding large language models | [ch1/note-1.md](ch1/note-1.md) |
-| **Chapter 2** Working with text data | [ch2/note-2.md] |
+| **Chapter 2** Working with text data | [ch2/note-1.md](ch2/note-1.md) |
+| **Chapter 3** Coding attention mechanisms | [ch3/note-1.md](ch3/note-1.md) |
+| **Chapter 4** Implementing a GPT model from scratch to generate text | [ch4/note-1.md](ch4/note-1.md) |
 
 ## Pre-requisite
 
