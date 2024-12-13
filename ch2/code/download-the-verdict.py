@@ -81,3 +81,33 @@ print(preprocessed[:30]) # the first 30 tokens
  'genius', '--', 'though', 'a', 'good', 'fellow', 'enough', '--', 'so', 'it', 
  'was', 'no', 'great', 'surprise', 'to', 'me', 'to', 'hear', 'that', ',', 'in']
 '''
+
+# 8. Create a list of all unique tokens and sort them alphabetically to determine the vocab size
+all_words = sorted(set(preprocessed))
+vocab_size = len(all_words) # 1130
+print(f'The total number of words in the vocabulary is {vocab_size}')
+
+# 9. Create vocabulary by mapping id to token
+vocab = {token:integer for integer, token in enumerate(all_words)}
+for i, item in enumerate(vocab.items()):
+    print(f'{i} : {item}')
+    if i >= 50:
+        break
+
+'''
+0 : ('!', 0)
+1 : ('"', 1)
+2 : ("'", 2)
+3 : ('(', 3)
+4 : (')', 4)
+5 : (',', 5)
+6 : ('--', 6)
+7 : ('.', 7)
+8 : (':', 8)
+9 : (';', 9)
+10 : ('?', 10)
+11 : ('A', 11)
+12 : ('Ah', 12)
+13 : ('Among', 13)
+...
+'''
