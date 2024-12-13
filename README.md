@@ -12,6 +12,8 @@ git clone --depth 1 https://github.com/rasbt/LLMs-from-scratch.git
 
 ```
 conda create --name llm-book-311 -y python=3.11
+conda activate llm-book-311
+
 pip install -r requirements.txt
 ```
 
