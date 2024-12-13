@@ -40,6 +40,8 @@ pandas >= 2.2.1       # ch06
 psutil >= 5.9.5       # ch07; already installed automatically as dependency of torch
 ```
 
+In this setting, we will no longer use Jupyter Notebook but Jupyter Lab. Execute by running on the command line as `jupyter-lab`.
+
 3. Install [MarkText](https://www.marktext.cc/) to be used a Markdown editor
 4. To setup docker, folwer https://github.com/rasbt/LLMs-from-scratch/tree/main/setup/03_optional-docker-environment
 
