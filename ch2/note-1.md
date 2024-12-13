@@ -256,3 +256,10 @@ if __name__ == '__main__':
 ```
 **END: Hand-on**
 
+<img width="673" alt="image" src="https://github.com/user-attachments/assets/86597c09-7d17-4b8c-8691-b65ad920e6f9" />
+
+## 2.4 Adding special context tokens
+
+**IN PROGRESS**
+
+
