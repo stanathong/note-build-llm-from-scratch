@@ -1,5 +1,14 @@
 # note-build-llm-from-scratch
 
+This repo contains my study notes based exclusively from the book [Build A Large Language Model from Scratch by Sebastian Raschka](https://amzn.to/4fqvn0D). The majority of images are taken from the book itself.
+
+## Notes and Extra Contents for Each Chapter
+
+| Chapter | Link |
+| --- | --- |
+| **Chapter 1** Understanding large language models | [ch1/note-1.md](ch1/note-1.md) |
+| **Chapter 2** Working with text data | [ch2/note-2.md] |
+
 ## Pre-requisite
 
 1. Clone the repository
@@ -33,5 +42,9 @@ psutil >= 5.9.5       # ch07; already installed automatically as dependency of t
 
 3. Install [MarkText](https://www.marktext.cc/) to be used a Markdown editor
 4. To setup docker, folwer https://github.com/rasbt/LLMs-from-scratch/tree/main/setup/03_optional-docker-environment
+
+
+
+
 
 
