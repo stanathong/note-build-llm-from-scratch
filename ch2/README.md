@@ -516,6 +516,271 @@ print(integers) # [33901, 86, 343, 86, 220, 959]
 print(strings) # Akwirw ier
 ```
 
+## 2.6 Data sampling with a sliding window
+
+* We train LLMs to generate one word at a time, so we want to prepare the training data accordingly where the next word in a sequence represents the target to predict:
+* The next step in creating the embeddings for the LLM is to generate **the input-target pairs** required for training LLM.
+* What do these input-target pairs look like? As we already learned, LLMs are pretrained by predicting the next word in a text.
+
+<img width="553" alt="image" src="https://github.com/user-attachments/assets/d2bbfab2-9937-47b8-97f1-4cdccb3b521a" />
+
+> Given a text sample, extract input blocks as subsamples that serve as input to the LLM.
+> The LLM's prediction task during training is to predict the next word that follows the input block.
+> During training, we mask all words that are past the target.
+> **In the actual process, the text must undergo tokenization before LLM can process it.**
+
+* Let’s implement a data loader that fetches the input–target pairs in figure 2.12 from the training dataset using a sliding window approach. To get started, we will tokenize the whole “The Verdict” short story using the BPE tokenizer:
+* The implementation is from [code/data-sampling-with-sliding-window.py](code/data-sampling-with-sliding-window.py)
+
+```
+import tiktoken
+import urllib.request
+
+# Instantiate the BPE tokenizer from tiktoken
+tokenizer = tiktoken.get_encoding('gpt2')
+
+# Get the URL to the 'the-verdict'
+url = ("https://raw.githubusercontent.com/rasbt/LLMs-from-scratch/refs/"
+        "heads/main/ch02/01_main-chapter-code/the-verdict.txt")
+file_name = 'the-verdict.txt'
+urllib.request.urlretrieve(url, file_name)
+
+with open(file_name, 'r', encoding='utf-8') as f:
+    raw_text = f.read()
+
+# Tokenize the whole document
+enc_text = tokenizer.encode(raw_text)
+print('Len of enc_text = ', len(enc_text)) # 5145
+
+# Remove the first 50 tokens as its result is more *interesting*
+enc_sample = enc_text[50:]
+```
+* One of the easiest and most intuitive ways to create the **input-target pairs** for the next word prediction task is to create 2 variables, x and y.
+* x contains the input tokens, and y contains the output target -- which are the inputed shifted by 1.
+
+```
+# Create the input-target pairs: x, y
+# x is the input, y is the target tokens -- the input shifted by 1
+context_size = 4
+x = enc_sample[:context_size]
+y = enc_sample[1:context_size+1]
+print(f'x: {x}')
+print(f'y:      {y}')
+```
+* Output:
+
+> x: [290, 4920, 2241, 287]
+> y:      [4920, 2241, 287, 257]
+
+* This is how we can create the next-word prediction tasks.
+
+```
+# Create the next-word prediction tasks
+for i in range (1, context_size+1):
+    context = enc_sample[:i] # [0,i)
+    desired = enc_sample[i]
+    print(context, '---->', desired)
+```
+
+* Output:
+
+```
+[290] ----> 4920
+[290, 4920] ----> 2241
+[290, 4920, 2241] ----> 287
+[290, 4920, 2241, 287] ----> 257
+```
+
+* Every thing on the left of the arrow (---->) refers to the input an LLM would receive.
+* The token ID on the right side of the arrow represents the target token ID that the LLM is suposed to predict.
+* Next, we will repeat the previous code but convert the token IDs into text:
+
+```
+# Create the next-word prediction tasks
+# This time, convert from token ID into text
+for i in range (1, context_size+1):
+    context = enc_sample[:i] # [0,i)
+    desired = enc_sample[i]
+    print(tokenizer.decode(context), '---->', tokenizer.decode([desired]))
+```
+* Output:
+
+```
+and ---->  established
+and established ---->  himself
+and established himself ---->  in
+and established himself in ---->  a
+```
+
+<img width="688" alt="image" src="https://github.com/user-attachments/assets/c070a9f3-fa7c-4725-8b1a-e771ed99aa98" />
+
+### Implementing an efficient data loader
+
+* We need to implement an efficient data loader that **iterates over the input dataset and returns the inputs and targets as Pytorch tensors**, which can be thought of as multidimensional arrays.
+* We're interested in returning 2 tensors:
+    * An input tensor containing the text that the LLM sees.
+    * A target tensor that includes the targets for the LLM to predict.
+ * To implement efficient data loaders, we collect the inputs in a tensor x where each row represents one input context.
+ * A second tensor y contains the corresponding prediction targets (next words), which are created by shifting the input by one position.
+
+<img width="689" alt="image" src="https://github.com/user-attachments/assets/c6d7a377-9285-4b04-a6f0-77623023a395" />
+
+```
+import torch
+from torch.utils.data import Dataset, DataLoader
+
+class GPTDatasetV1(Dataset):
+    def __init__(self, txt, tokenizer, max_length, stride):
+        self.input_ids = []
+        self.target_ids = []
+
+        token_ids = tokenizer.encode(txt) # Tokenize the entire text
+        
+        # sliding window of max_lenght size with stride
+        for i in range(0, len(token_ids) - max_length, stride):
+            input_chunk = token_ids[i: i + max_length]
+            target_chunk = token_ids[i + 1: i + max_length + 1] # shift by 1
+            self.input_ids.append(torch.tensor(input_chunk))
+            self.target_ids.append(torch.tensor(target_chunk))
+    
+    def __len__(self):
+        return len(self.input_ids)
+    
+    def __getitem__(self, idx):
+        return self.input_ids[idx], self.target_ids[idx]
+```
+
+* The whole implementation with the code to load the inputs in batches via DataLoader and the test code is combined in to a single file [code/gpt-data-loader.py](code/gpt-data-loader.py)
+
+```
+import torch
+from torch.utils.data import Dataset, DataLoader
+import tiktoken
+import urllib.request
+
+class GPTDatasetV1(Dataset):
+    def __init__(self, txt, tokenizer, max_length, stride):
+        self.input_ids = []
+        self.target_ids = []
+
+        token_ids = tokenizer.encode(txt) # Tokenize the entire text
+        
+        # sliding window of max_lenght size with stride
+        for i in range(0, len(token_ids) - max_length, stride):
+            input_chunk = token_ids[i: i + max_length]
+            target_chunk = token_ids[i + 1: i + max_length + 1] # shift by 1
+            self.input_ids.append(torch.tensor(input_chunk))
+            self.target_ids.append(torch.tensor(target_chunk))
+    
+    def __len__(self):
+        return len(self.input_ids)
+    
+    def __getitem__(self, idx):
+        return self.input_ids[idx], self.target_ids[idx]
+    
+# Load the inputs in batches via Pytorch DataLoader
+def create_dataloader_v1(txt, batch_size=4, max_length=256, 
+                         stride=128, shuffle=True, drop_last=True,
+                         num_workers=0):
+    # Instantiate the BPE tokenizer from tiktoken
+    tokenizer = tiktoken.get_encoding('gpt2')
+    # Create dataset
+    dataset = GPTDatasetV1(txt, tokenizer, max_length, stride)
+    dataloader = DataLoader(
+        dataset, 
+        batch_size=batch_size, 
+        shuffle=shuffle, 
+        drop_last=drop_last, # if True, drops the last batch if it is shorter
+                             # than the specified batch_size to prevent
+                             # loss spikes during training
+        num_workers=num_workers # The number of CPU processes for preprocessing
+    )
+    return dataloader
+
+# Test
+# Download the text file to be used for training
+url = ("https://raw.githubusercontent.com/rasbt/LLMs-from-scratch/refs/"
+       "heads/main/ch02/01_main-chapter-code/the-verdict.txt")
+file_name = "the-verdict.txt"
+urllib.request.urlretrieve(url, file_name)
+
+with open(file_name, 'r', encoding='utf-8') as f:
+    raw_text = f.read()
+
+data_loader = create_dataloader_v1(
+    raw_text, batch_size=1, max_length=4, stride=1, shuffle=False)
+data_iter = iter(data_loader) # Convert dataloader into a Python iterator
+                              # to fetch the next entry via 
+                              # Python's built-in next() function
+first_batch = next(data_iter)
+print(first_batch)
+
+second_batch = next(data_iter)
+print(second_batch)
+```
+
+* Output:
+```
+first_batch 
+[tensor([[  40,  367, 2885, 1464]]), tensor([[ 367, 2885, 1464, 1807]])]
+second_batch
+[tensor([[ 367, 2885, 1464, 1807]]), tensor([[2885, 1464, 1807, 3619]])]
+```
+
+* Analysis of the sequential token ids with input size of 4.
+> Sequential token ids: 40, 367, 2885, 1464 1807 3619
+> first_batch's inputs: 40, 367, 2885, 1464
+> first_batch's targets: 367, 2885, 1464 1807
+> second_batch's input: 367, 2885, 1464 1807
+> second_batch's targets: 2885, 1464, 1807, 3619
+
+<img width="561" alt="image" src="https://github.com/user-attachments/assets/50e40a87-df21-4764-bf0c-dc79344d6094" />
+
+* **Batch size**: **Small batch sizes** require less memory during training but lead to **more noisy model updates**.
+* Just like in regular deep learning, the batch size is a trade-off and a hyperparameter to experiment with when training LLMs.
+
+* Test with different batch sizes and stride: batch_size=8, max_length=4, stride=4.
+
+```
+# Setting different batch size and strides
+data_loader = create_dataloader_v1(
+    raw_text, batch_size=8, max_length=4, stride=4, shuffle=False)
+
+data_iter = iter(data_loader)
+inputs, targets = next(data_iter)
+print('Inputs:\n', inputs)
+print('\nTargets:\n', targets)
+```
+
+* Output:
+
+```
+Inputs:
+ tensor([[   40,   367,  2885,  1464],
+        [ 1807,  3619,   402,   271],
+        [10899,  2138,   257,  7026],
+        [15632,   438,  2016,   257],
+        [  922,  5891,  1576,   438],
+        [  568,   340,   373,   645],
+        [ 1049,  5975,   284,   502],
+        [  284,  3285,   326,    11]])
+
+Targets:
+ tensor([[  367,  2885,  1464,  1807],
+        [ 3619,   402,   271, 10899],
+        [ 2138,   257,  7026, 15632],
+        [  438,  2016,   257,   922],
+        [ 5891,  1576,   438,   568],
+        [  340,   373,   645,  1049],
+        [ 5975,   284,   502,   284],
+        [ 3285,   326,    11,   287]])
+```
+
+* Note that when we increate the stride to 4 (with max_length = 4), we utilise the dataset fully i.e. we don't skip a single word.
+* **This avoid any overlap between the batches since more overlap could lead to incrased overfitting.**
+
+
+
 
 
 
