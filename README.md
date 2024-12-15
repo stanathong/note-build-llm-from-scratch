@@ -1,15 +1,18 @@
-# note-build-llm-from-scratch
+# Note taken while reading "Build A Large Language Model from Scratch"
 
 This repo contains my study notes based exclusively from the book [Build A Large Language Model from Scratch by Sebastian Raschka](https://amzn.to/4fqvn0D). The majority of images are taken from the book itself.
 
 ## Notes and Extra Contents for Each Chapter
 
-| Chapter | Link |
-| --- | --- |
-| **Chapter 1** Understanding large language models | [ch1/README.md](ch1/note-1.md) |
-| **Chapter 2** Working with text data | [ch2/note-1.md](ch2/README.md) |
-| **Chapter 3** Coding attention mechanisms | [ch3/note-1.md](ch3/README.md) |
-| **Chapter 4** Implementing a GPT model from scratch to generate text | [ch4/note-1.md](ch4/README.md) |
+| Chapter | Link | Status |
+| --- | --- | ---|
+| **Chapter 1** Understanding large language models | [ch1/README.md](ch1/README.md) | **Finished** |
+| **Chapter 2** Working with text data | [ch2/README.md](ch2/README.md) | **In progress** |
+| **Chapter 3** Coding attention mechanisms | [ch3/README.md] | **Not started** |
+| **Chapter 4** Implementing a GPT model from scratch to generate text | [ch4/README.md] | **Not started** |
+| **Chapter 5** Pretraining on unlabeled data | [ch5/README.md] | **Not started** |
+| **Chapter 6** Fine-tuning for classification | [ch6/README.md] | **Not started** |
+| **Chapter 7** Fine-tuning to follow instructions | [ch7/README.md] | **Not started** |
 
 ## Pre-requisite
 
@@ -45,7 +48,7 @@ psutil >= 5.9.5       # ch07; already installed automatically as dependency of t
 In this setting, we will no longer use Jupyter Notebook but Jupyter Lab. Execute by running on the command line as `jupyter-lab`.
 
 3. Install [MarkText](https://www.marktext.cc/) to be used a Markdown editor
-4. To setup docker, folwer https://github.com/rasbt/LLMs-from-scratch/tree/main/setup/03_optional-docker-environment
+4. To setup docker, follow https://github.com/rasbt/LLMs-from-scratch/tree/main/setup/03_optional-docker-environment
 
 
 
