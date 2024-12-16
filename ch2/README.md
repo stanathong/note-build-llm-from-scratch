@@ -779,6 +779,83 @@ Targets:
 * Note that when we increate the stride to 4 (with max_length = 4), we utilise the dataset fully i.e. we don't skip a single word.
 * **This avoid any overlap between the batches since more overlap could lead to incrased overfitting.**
 
+## 2.7 Creating token embeddings
+
+* The last step in preparing the input text for LLM training is to convert the token IDs into embedding vectors.
+* Input text -> Tokenized text -> Token IDs -> Token embeddings
+
+<img width="589" alt="image" src="https://github.com/user-attachments/assets/4a09953d-294d-4341-a7a1-f0a896431d8c" />
+
+* As a preliminary step, we must initialise these embedding weights with random values.
+* These initialisation serves as the starting point for the LLM's learning process. (these embedding weights will be optimised as part of the LLM training)
+* A continuous vector representation, or embedding, is necessary since GPT-like LLMs are deep neural networks trained with the backpropagation algorithm.
+
+### Example of how to convert the token ID to embedding vector
+
+* Let's say we have the following four input tokens with IDs 2, 3, 5, 1:
+
+```
+input_ids = torch.tensor([2, 3, 5, 1])
+```
+
+* For simplicity, suppose we have a small vocabulary of only 6 words, instead of the 50,257 words in the BPE tokenizer vocabulary), and we want to create embeddings of size 3 (in GPT-3, the embedding size is 12,288 dimensions):
+
+```
+vocab_size = 6 # rows
+output_dim = 3 # cols
+```
+
+* Instanticate an embedding layer in Pytorch (use 123 as random seed for reproducibility)
+
+```
+torch.manual_seed(123)
+embedding_layer = torch.nn.Embedding(vocab_size, output_dim)
+print(embedding_layer.weight)
+```
+
+* The embedding layer's weight matrix:
+
+```
+Parameter containing:
+tensor([[ 0.3374, -0.1778, -0.1690],
+        [ 0.9178,  1.5810,  1.3010],
+        [ 1.2753, -0.2010, -0.1606],
+        [-0.4015,  0.9666, -1.1481],
+        [-1.1589,  0.3255, -0.6315],
+        [-2.8400, -0.7849, -1.4096]], requires_grad=True)
+```
+* The weight matrix of the embedding layer contains small, random values.
+* These values are optimized during LLM training as part of the LLM optimization itself.
+* The weight matrix has six rows and three columns.
+* There is one row for each of the six possible tokens in the vocabulary, and there is one column for each of the three embedding dimensions.
+* For a token ID = 3, obtain the embedding vector:
+
+```
+print(embedding_layer(torch.tensor([3])))
+```
+
+* The returned embedding vector is below which is corresponding to the 3rd row (0-based) of the embedding layer weights.
+
+```
+tensor([[-0.4015,  0.9666, -1.1481]], grad_fn=<EmbeddingBackward0>)
+```
+* **The embedding layer is essentially a lookup operation that retrieves rows from the embedding layer’s weight matrix via a token ID.**
+
+> Note: The embedding layer approach is just a more efficient way of
+> implementing one-hot encoding followed by matrix multiplication in
+> a fully connected layer.
+
+* Next, find all four input IDs `(torch.tensor([2, 3, 5, 1]))`
+
+```
+print(embedding_layer(input_ids))
+
+# The print output reveals that this results in a 4 × 3 matrix:
+tensor([[ 1.2753, -0.2010, -0.1606],
+        [-0.4015,  0.9666, -1.1481],
+        [-2.8400, -0.7849, -1.4096],
+        [ 0.9178,  1.5810,  1.3010]], grad_fn=<EmbeddingBackward0>)
+```
 
 
 
