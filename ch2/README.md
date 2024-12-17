@@ -857,6 +857,8 @@ tensor([[ 1.2753, -0.2010, -0.1606],
         [ 0.9178,  1.5810,  1.3010]], grad_fn=<EmbeddingBackward0>)
 ```
 
+* The comparison between using torch.nn.Embedding and torch.nn.Linear can be found at [hand-on/understanding-embedding-vs-linear-layers.md](hand-on/understanding-embedding-vs-linear-layers.md).
+
 
 
 
