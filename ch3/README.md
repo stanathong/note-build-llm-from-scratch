@@ -79,7 +79,7 @@
 
 **Figure 3.7**
 > * We would like to compute the context vector z(2) for the second input element x(2), which correspond to the token "journey".
-> * The enhanced cntext vector z(2) is an embedding that contains information about x(2) and all other input elements x(1) to x(T).
+> * The enhanced context vector z(2) is an embedding that contains information about x(2) and all other input elements x(1) to x(T).
 
 * **Context vectors** play a crucial role in self-attention.
 * **Their purpose is to create enriched representations of each element in an input sequence** (like a sentence) by incorporating information from all other elements in the sequence.
@@ -239,7 +239,143 @@ print('context_vector_idx_1:', context_vector_idx1)
 
 ### 3.3.2 Computing attention weights for all input tokens
 
+* In this section, we will extend the previous implementation to calculate attention weights and context vectors for all inputs.
+
+<img width="498" alt="image" src="https://github.com/user-attachments/assets/ab06bef6-0315-4c85-8a95-87b5dce1434c" />
+
+    * The tokens on each row is the query word.
+    * The token on the top is the input word that the query word is obtained attention weight for.
+```
+Query: 1:journey
+                                   0:Your 1:journey 2:starts 3:with  4.one    5.step
+attention_weights_softmax: tensor([0.1385, 0.2379,   0.2333, 0.1240, 0.1082, 0.1581])
+```
+
+* Now we're going to compute all context vectors instead of only one at a time.
+
+<img width="506" alt="image" src="https://github.com/user-attachments/assets/2fda5039-dea6-49b5-aad8-822dc768e0a7" />
+
+**Hands-on**
+* Code: [code/sec-3.3.2-context-vector.py](code/sec-3.3.2-context-vector.py)
+
+```
+import torch
+
+# Create a sequence of token embeddings with 3 dimension
+# Input sentence: Your journey starts with one step
+inputs = torch.tensor(
+    [[0.43, 0.15, 0.89], # Your     (x^1)
+     [0.55, 0.87, 0.66], # journey  (x^2)
+     [0.57, 0.85, 0.64], # starts   (x^3)
+     [0.22, 0.58, 0.33], # with     (x^4)
+     [0.77, 0.25, 0.10], # one      (x^5)
+     [0.05, 0.80, 0.55]] # step     (x^6)
+)
+
+print('inputs.shape:', inputs.shape) # # torch.Size([6, 3])
+
+# Compute attention scores for all input
+num_tokens = inputs.shape[0]
+# score is arrange as 2D confusion matrix
+attention_scores = torch.empty(num_tokens, num_tokens)
+for i, query in enumerate(inputs):
+    for j, token in enumerate(inputs):
+        # i: row, j: col
+        attention_scores[i, j] = torch.dot(query, token)
+
+print(attention_scores)
+```
+
+* The resulting attention scores (unnormalised):
+```
+tensor([[0.9995, 0.9544, 0.9422, 0.4753, 0.4576, 0.6310],
+        [0.9544, 1.4950, 1.4754, 0.8434, 0.7070, 1.0865],
+        [0.9422, 1.4754, 1.4570, 0.8296, 0.7154, 1.0605],
+        [0.4753, 0.8434, 0.8296, 0.4937, 0.3474, 0.6565],
+        [0.4576, 0.7070, 0.7154, 0.3474, 0.6654, 0.2935],
+        [0.6310, 1.0865, 1.0605, 0.6565, 0.2935, 0.9450]])
+```
+* The above implementation use 2 for-loops which is slow. We can achieve the same results using matrix multiplication.
+
+```
+# Instead of using 2 for-loops, we can use matrix multiplication
+attention_scores = inputs @ inputs.T
+print(attention_scores)
+```
+
+* The resulting attention scores (unnormalised) using matrix multiplication:
+```
+tensor([[0.9995, 0.9544, 0.9422, 0.4753, 0.4576, 0.6310],
+        [0.9544, 1.4950, 1.4754, 0.8434, 0.7070, 1.0865],
+        [0.9422, 1.4754, 1.4570, 0.8296, 0.7154, 1.0605],
+        [0.4753, 0.8434, 0.8296, 0.4937, 0.3474, 0.6565],
+        [0.4576, 0.7070, 0.7154, 0.3474, 0.6654, 0.2935],
+        [0.6310, 1.0865, 1.0605, 0.6565, 0.2935, 0.9450]])
+```
+
+* Next step, we need to normalise each row so that **the values in each row sum to 1**.
+
+```
+# Normalise the attention scores using softmax
+attention_weights = torch.softmax(attention_scores, dim=-1)
+print(attention_weights)
+```
+
+* The computed attention weights are:
+```
+tensor([[0.2098, 0.2006, 0.1981, 0.1242, 0.1220, 0.1452],
+        [0.1385, 0.2379, 0.2333, 0.1240, 0.1082, 0.1581],
+        [0.1390, 0.2369, 0.2326, 0.1242, 0.1108, 0.1565],
+        [0.1435, 0.2074, 0.2046, 0.1462, 0.1263, 0.1720],
+        [0.1526, 0.1958, 0.1975, 0.1367, 0.1879, 0.1295],
+        [0.1385, 0.2184, 0.2128, 0.1420, 0.0988, 0.1896]])
+
+# Compute sum for each row
+print(torch.sum(attention_weights, dim=-1))
+# tensor([1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000])
+
+# sum of first row and first column
+print(torch.sum(attention_weights[0], dim=-1)) # tensor(1.0000)
+print(torch.sum(attention_weights[:,:1], dim=0)) # tensor([0.9220])
+```
+
+* In the final step, we use these attention weights to compute all context vectors via matrix multiplication.
+
+```
+# Step#3 - Compute context vector
+#                         6x6              6x3
+all_context_vectors = attention_weights @ inputs
+print(all_context_vectors)
+```
+
+* The output of Step#3 is the three dimensional context vector for each word.
+```
+tensor([[0.4421, 0.5931, 0.5790],
+        [0.4419, 0.6515, 0.5683],
+        [0.4431, 0.6496, 0.5671],
+        [0.4304, 0.6298, 0.5510],
+        [0.4671, 0.5910, 0.5266],
+        [0.4177, 0.6503, 0.5645]])
+```
+
+* Now we have finished implementing a simple self-attention mechanism.
+* Next, we're adding trainable weights to enable LLM to learn from data and to improve its performance on specific tasks.
+
 ## 3.4 Implementing self-attention with trainable weights
+
+* In this section, we will implement the self-attention mechanism used in the original transformer architecture, the GPT models, most other popular LLMs.
+* This self-attention mechanism is called **scaled dot-product attention**.
+* Figure 3.13 shows how this self-attention mechanism fits into the broader context of implementing an LLM.
+
+<img width="729" alt="image" src="https://github.com/user-attachments/assets/615fbbf3-fe41-4ee0-ae1f-aef295102990" />
+
+* In the previous section, we compute context vectors as weighted sum over the input vectors specific to a certain input element.
+* In this section, we will introduce weight matrices that are updated during training.
+* These trainable weights are the key that enables the attention module inside the model to produce *good* context vectors.
+
+### 3.4.1 Computing the attention weights step by step
+
+### 3.4.2 Implementing a compact self-attention Python class
 
 ## 3.5 Hiding future words with causal attention
 
