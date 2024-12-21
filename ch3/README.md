@@ -375,6 +375,160 @@ tensor([[0.4421, 0.5931, 0.5790],
 
 ### 3.4.1 Computing the attention weights step by step
 
+* In this section, we will implement the self-attention mechanism by introducing three 3 trainable weight matrices: Wq, Wk, and Wv.
+* These 3 matrices are used to proejct the embedded input tokens x(i) into query, key and value vectors.
+
+<img width="724" alt="image" src="https://github.com/user-attachments/assets/7a78f986-6565-4f00-8414-89b0806d09b5" />
+
+* In the previous section, we maually compute attention score --> attention weights, then applying attention weights to the input tokens to obtain the context vector. In this section, the attention weights will be obtained by training.
+* We'll start by computing only one context vector, z(2), which in fact z(1) or 'journey' when using base-0 index.
+* We'll start by defining a few variables:
+
+<img width="617" alt="image" src="https://github.com/user-attachments/assets/8b593064-26f9-4f6e-8be9-1586651c5604" />
+
+**Hands-on**
+* Code: [code/sec-3.4.1-attention-weights.py](code/sec-3.4.1-attention-weights.py)
+
+```
+inputs = torch.tensor(
+    [[0.43, 0.15, 0.89], # Your     (x^1)
+     [0.55, 0.87, 0.66], # journey  (x^2)
+     [0.57, 0.85, 0.64], # starts   (x^3)
+     [0.22, 0.58, 0.33], # with     (x^4)
+     [0.77, 0.25, 0.10], # one      (x^5)
+     [0.05, 0.80, 0.55]] # step     (x^6)    
+)
+print('inputs.shape:', inputs.shape) # torch.Size([6, 3])
+
+x_2 = inputs[1] # journey
+d_in = inputs.shape[1] # The input embedding size, d_in = 3
+d_out = 2 # The output embedding size, d_out = 2
+```
+
+* Initialise the three weight matrices: Wq, Wk, Wv.
+* Note that if we were to use the weight matrices for model training, we would set `requires_grad=True` to update these matrices during training.
+
+```
+torch.manual_seed(123)
+
+W_query = torch.nn.Parameter(torch.rand(d_in, d_out), requires_grad=False)
+W_key = torch.nn.Parameter(torch.rand(d_in, d_out), requires_grad=False)
+W_value = torch.nn.Parameter(torch.rand(d_in, d_out), requires_grad=False)
+print(W_query.shape) # torch.Size([3, 2])
+```
+
+* Compute the query, key and value vectors:
+
+```
+query_2 = x_2 @ W_query # 1x3 @ 3x2
+key_2 = x_2 @ W_key
+value_2 = x_2 @ W_value
+
+print(query_2.shape) # torch.Size([2])
+print(query_2)
+```
+* The output for the query results in a 2-dimensional vector - this is because we set the output embedding size to 2.
+```
+tensor([0.4306, 1.4551])
+```
+
+> **Weight paramters vs attention weights**
+> * In the weight matrices W, the term *weight* is short for **weight parameters**, the values of a neural network that are optimised during training.
+> * These weights are not the same as attention weights.
+> * Attention weights determine the extent to which a context vector depends on the different parts of the input (i.e. to what extent the network focuses on different parts of the input).
+> * In summary, **weight parameters are the fundamental, learned cofficient that define the network's connections, while attention weights are dynamic, context-specific values**.
+
+* Even though our temporary goal is only to compute the one context vector, z(2), **we still require the key and value vectors for all input elements as they are involved in computing attention weights** with respect to the query q(2), as shown in Figure 3.14.
+* We can obtain all keys and values via matrix multiplication as shown below:
+
+```
+# To obtain all keys and values:
+keys = inputs @ W_key
+values = inputs @ W_value
+print('keys.shape:', keys.shape)
+print('values.shape:', values.shape)
+```
+* We can tell from the outputs below that, we successfully projected the six input tokens from a three-dimensional onto a two-dimensional embedding space.
+> * keys.shape: torch.Size([6, 2])
+> * values.shape: torch.Size([6, 2])
+
+* **The next step is to compute the attention scores.**
+
+<img width="731" alt="image" src="https://github.com/user-attachments/assets/35f3cc39-a3fa-4a59-9766-2419f9988046" />
+
+* **First**, let's compute the attention score ω22:
+
+```
+key_2 = keys[1]
+attention_score_22 = query_2.dot(key_2)
+print(attention_score_22) # tensor(1.8524)
+```
+* The result is the unnormalised attetion score: tensor(1.8524).
+
+* **Second**, we can generalise this computation to all attention scores via matrix multiplication.
+```
+attention_score_2 = query_2 @ keys.T
+print(attention_score_2)
+# tensor([1.2705, 1.8524, 1.8111, 1.0795, 0.5577, 1.5440])
+```
+* The result at index 1 (1.8524) is the same as the result computed before.
+
+* **Next**, we want to go from the attention scores to attention weights (= the normalised attention weights).
+    * We compute the attention weights by (1) scaling the attention scores and (2) using the softmax function.
+    * However, now we **scale the attention scores by dividing them by the square root of the embedding dimension of the keys** (taking the square root is mathematically the same as exponentiating by 0.5).
+
+<img width="434" alt="image" src="https://github.com/user-attachments/assets/2d4be5cd-47c9-4a39-be18-0fd8510de767" />
+
+```
+# Computing attention weight
+d_k = keys.shape[-1] # dimension of key
+attention_weight_2 = torch.softmax(attention_score_2 / d_k**0.5, dim=-1)
+print(attention_weight_2)
+```
+
+* Notice the outputs from the attetion score (top row) and the attention weight (bottom row).
+> tensor([1.2705, 1.8524, 1.8111, 1.0795, 0.5577, 1.5440])
+>\
+> tensor([0.1500, 0.2264, 0.2199, 0.1311, 0.0906, 0.1820])
+
+<img width="724" alt="image" src="https://github.com/user-attachments/assets/d8304b4d-b154-40c4-aef0-5f34f8d3ecd0" />
+
+> **The rational behind saled-dot product attention**
+> \
+> <img width="434" alt="image" src="https://github.com/user-attachments/assets/e67bc313-5e93-4e5a-93b2-23fd08116c60" />
+> \
+> **The reason for the normalization by the embedding dimension size is to improve the training performance by avoiding small gradients**.
+> For instance, when scaling up the embedding dimension, which is typically greater than 1,000 for GPT-like LLMs, large dot products can result in very small gradients during backpropagation due to the softmax function applied to them.
+> As dot products increase, the softmax function behaves more like a step function, resulting in gradients nearing zero.
+> These small gradients can drastically slow down learning or cause training to stagnate.
+> \
+> The scaling by the square root of the embedding dimension is the reason why this self-attention mechanism is also called scaled-dot product attention.
+
+* The **final step** is to compute the context vectors, as illustrated in the picture below.
+
+<img width="748" alt="image" src="https://github.com/user-attachments/assets/262e72ca-a878-4c7f-b02a-c48e0192cc29" />
+
+* In the previous section, we compute the context vector by **multiplying attention weights to all the input embedding vector** and sum them to create the output context vector.
+* In this section, we compute the context vector as a **weighted sum over the `value vectors`**.
+* The attention weights now serve as a weighting factor that weight the respective important of each value vector.
+* We can again use matrix multiplication to obtain the output in one step.
+
+```
+# Compute contect vector using matrix multiplication
+#                     1x6               6x2
+context_vector_2 = attention_weight_2 @ values
+print(context_vector_2) # tensor([0.3061, 0.8210])
+```
+
+* So far, we've only computed a single context vector z(2). Next, we will generalise the code to compute all context vectors in the input sequence, z(1) to z(T).
+
+> **Why query, key, and value?**
+> * The terms “key,” “query,” and “value” in the context of attention mechanisms are borrowed from the domain of information retrieval and databases, where similar concepts are used to store, search, and retrieve information.
+> * **A query is analogous to a search query in a database.** It represents *the current item (e.g. a word or token in a sentence) the model focuses on* or tries to understand. The query is used to probe the other parts of the input sequence to determine how much attention to pay to them.
+> * **The key is like a database key used for indexing and searching.** In the attention mechanism, each item in the input sequence (e.g., each word in a sentence) has an associated key. These keys are used to match the query.
+> * **The value in this context is similar to the value in a key-value pair in a database**. It represents the actual content or representation of the input items. *Once the model determines which keys (and thus which parts of the input) are most relevant to the query (the current focus item), it retrieves the corresponding values*.
+
+
 ### 3.4.2 Implementing a compact self-attention Python class
 
 ## 3.5 Hiding future words with causal attention
