@@ -531,6 +531,239 @@ print(context_vector_2) # tensor([0.3061, 0.8210])
 
 ### 3.4.2 Implementing a compact self-attention Python class
 
+* **A compact self-attention Python class**
+    * The __init__ method initialises the trainable weight matrices (W_query, W_key and W_value) for queries, keys, and values, each transforming the input dimension `d_in` to an output_dimension `d_out`.
+    * During the forward pass, using the forward method,
+    * 1) We compute the attention score (attention_scores) by multiplying queries and keys
+    * 2) We then normalise the score using softmax and scale by the square root of its dimension.
+    * 3) We create a context vector by weighting the values with these normalised attention scores.  
+
+* Code: [code/sec-3.4.2-compact-self-attention-class.py](code/sec-3.4.2-compact-self-attention-class.py)
+```
+import torch.nn as nn
+import torch
+
+class SelfAttention_v1(nn.Module):
+    def __init__(self, d_in, d_out):
+        super().__init__()
+        self.W_query = nn.Parameter(torch.rand(d_in, d_out))
+        self.W_key = nn.Parameter(torch.rand(d_in, d_out))
+        self.W_value = nn.Parameter(torch.rand(d_in, d_out))
+
+    def forward(self, x):
+        keys = x @ self.W_key
+        queries = x @ self.W_query
+        values = x @self.W_value
+
+        attention_scores = queries @ keys.T # omega
+        attention_weights = torch.softmax(
+            attention_scores / keys.shape[-1]**0.5, dim=-1)
+        
+        context_vector = attention_weights @ values
+        return context_vector
+```
+* We can use the class above the compute the context vector for our previous input example as
+
+```
+# Create a sequence of token embeddings with 3 dimension
+# Input sentence: Your journey starts with one step
+inputs = torch.tensor(
+    [[0.43, 0.15, 0.89], # Your     (x^1)
+     [0.55, 0.87, 0.66], # journey  (x^2)
+     [0.57, 0.85, 0.64], # starts   (x^3)
+     [0.22, 0.58, 0.33], # with     (x^4)
+     [0.77, 0.25, 0.10], # one      (x^5)
+     [0.05, 0.80, 0.55]] # step     (x^6)
+)
+print('inputs.shape:', inputs.shape) # # torch.Size([6, 3])
+
+d_in = inputs.shape[1] # The input embedding size, d_in = 3
+d_out = 2 # The output embedding size, d_out = 2
+
+# To compute the context vectors, we can do this by:
+torch.manual_seed(123)
+
+self_attention_v1 = SelfAttention_v1(d_in, d_out)
+print(self_attention_v1(inputs))
+```
+
+* Since the inputs contains 6 embedding vectors, this results in an output of 6 context vectors:
+
+```
+tensor([[0.2996, 0.8053],
+        [0.3061, 0.8210],
+        [0.3058, 0.8203],
+        [0.2948, 0.7939],
+        [0.2927, 0.7891],
+        [0.2990, 0.8040]], grad_fn=<MmBackward0>)
+```
+
+* The picture below summarise the self-attention mechanism we have just implemented.
+
+<img width="750" alt="image" src="https://github.com/user-attachments/assets/09ef07ad-0c87-4efe-86ab-00f39fa60c52" />
+
+* Self-attention involves the trainable weight matrices: Wq, Wk, Wv.
+* These 3 matrices: Wq, Wk, Wv transform input data into queries, keys and values.
+* As the method is exposed to more data during training, it adjusts these trainable weights.
+\
+* We can improve the `SelfAttention_v1` class further by utilising Pytorch's nn.Linear layers which effectively perform matrix multiplication when the bias units are disabled.
+* The advantance of using Pytorch's nn.Linear layers instead of nn.Parameter is hat nn.Linear has an optimised weight initialisation scheme, contributing to more stable and effective model training. 
+
+* Code: [code/sec-3.4.2-compact-self-attention-class_v2.py](code/sec-3.4.2-compact-self-attention-class_v2.py)
+```
+import torch.nn as nn
+import torch
+
+class SelfAttention_v2(nn.Module):
+    def __init__(self, d_in, d_out, qkv_bias=False):
+        super().__init__()
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias) # changed from v1
+        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+
+    def forward(self, x):
+        keys = self.W_key(x) # changed from v1 which do `x @ self.W_key`
+        queries = self.W_query(x)
+        values = self.W_value(x)
+
+        attention_scores = queries @ keys.T # omega
+        attention_weights = torch.softmax(
+            attention_scores / keys.shape[-1]**0.5, dim=-1)
+        
+        context_vector = attention_weights @ values
+        return context_vector
+```
+
+* We can use the class to obtain the results as:
+
+```
+d_in = inputs.shape[1] # The input embedding size, d_in = 3
+d_out = 2 # The output embedding size, d_out = 2
+
+# To compute the context vectors, we can do this by:
+torch.manual_seed(789) # *** different seed value
+
+self_attention_v2 = SelfAttention_v2(d_in, d_out)
+print(self_attention_v2(inputs))
+```
+
+* Note that the outputs we obtain below are different from the one we obtain from previous version, this is because we use different initial weights for the weight matrices since nn.Linear uses a more sophisticated wieght initialisation scheme.
+
+```
+tensor([[-0.0739,  0.0713],
+        [-0.0748,  0.0703],
+        [-0.0749,  0.0702],
+        [-0.0760,  0.0685],
+        [-0.0763,  0.0679],
+        [-0.0754,  0.0693]], grad_fn=<MmBackward0>)
+```
+* In the next step, we will make an enhancement to the self-attetion mechanism focusing specifically on incorporating **causal and multi-head elements**.
+* **The causal aspect** involves modifying the attention mechanism to prevent the model from accessing future information in the sequence. This is essential for tasks like language modeling, where each word prediction should only depends on previous words.
+* **The multi-head component** involves splitting the attention mechanism into multiple "heads". Each head learns different aspects of the data, allowing the model to simultaneously attend to information from different representation subspaces at different positions. This improves the model's performance in complex tasks.
+
+### Excercise 3.1 Comparing SelfAttention_v1 and SelfAttention_v2
+
+> `nn.Linear` in SelfAttention_v2 uses a different weight initialisation scheme than `nn.Parameter(torch.rand(d_in, d_out))` used in SelfAttention_v1, which causes both mechanisms to produce different results.
+\
+> To check that both implementations, SelfAttention_v1 and SelfAttention_v2, are similar, we can *transfer the weight matrices from a SelfAttention_v2 object to a Self- Attention_v1*, such that both objects produce the same results.
+> **Task**: is to correctly assign the weights from an instance of SelfAttention_v2 to an instance of SelfAttention_v1.
+> To do this, you need to understand the relationship between the weights in both versions. (Hint: nn.Linear stores the weight matrix in a transposed form.) After the assignment, you should observe that both instances produce the same outputs.
+
+* Code: [code/excercise-3.1.py](code/excercise-3.1.py)
+
+```
+import torch.nn as nn
+import torch
+
+
+class SelfAttention_v1(nn.Module):
+    def __init__(self, d_in, d_out):
+        super().__init__()
+        self.W_query = nn.Parameter(torch.rand(d_in, d_out))
+        self.W_key = nn.Parameter(torch.rand(d_in, d_out))
+        self.W_value = nn.Parameter(torch.rand(d_in, d_out))
+
+    def forward(self, x):
+        keys = x @ self.W_key
+        queries = x @ self.W_query
+        values = x @self.W_value
+
+        attention_scores = queries @ keys.T # omega
+        attention_weights = torch.softmax(
+            attention_scores / keys.shape[-1]**0.5, dim=-1)
+        
+        context_vector = attention_weights @ values
+        return context_vector
+
+
+class SelfAttention_v2(nn.Module):
+    def __init__(self, d_in, d_out, qkv_bias=False):
+        super().__init__()
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias) # changed from v1
+        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+
+    def forward(self, x):
+        keys = self.W_key(x) # changed from v1 which do `x @ self.W_key`
+        queries = self.W_query(x)
+        values = self.W_value(x)
+
+        attention_scores = queries @ keys.T # omega
+        attention_weights = torch.softmax(
+            attention_scores / keys.shape[-1]**0.5, dim=-1)
+        
+        context_vector = attention_weights @ values
+        return context_vector
+
+# Initialise input embedding sequence
+inputs = torch.tensor(
+    [[0.43, 0.15, 0.89], # Your     (x^1)
+     [0.55, 0.87, 0.66], # journey  (x^2)
+     [0.57, 0.85, 0.64], # starts   (x^3)
+     [0.22, 0.58, 0.33], # with     (x^4)
+     [0.77, 0.25, 0.10], # one      (x^5)
+     [0.05, 0.80, 0.55]] # step     (x^6)
+)
+d_in = inputs.shape[1] # The input embedding size, d_in = 3
+d_out = 2 # The output embedding size, d_out = 2
+
+# Create an instance for both class
+torch.manual_seed(123)
+self_attention_v1 = SelfAttention_v1(d_in, d_out)
+
+torch.manual_seed(123)
+self_attention_v2 = SelfAttention_v2(d_in, d_out)
+```
+
+**The imporant change to make the same weights.**
+```
+# nn.Linear stores the weight matrix in a transposed form, hence transpose is required here.
+self_attention_v1.W_query = torch.nn.Parameter(self_attention_v2.W_query.weight.T)
+self_attention_v1.W_query = torch.nn.Parameter(self_attention_v2.W_query.weight.T)
+self_attention_v1.W_value = torch.nn.Parameter(self_attention_v2.W_value.weight.T)
+
+print('Output from v1:\n', self_attention_v1(inputs))
+print('Output from v2:\n', self_attention_v2(inputs))
+```
+
+**Outputs:**
+```
+Output from v1:
+ tensor([[-0.5323, -0.1086],
+        [-0.5253, -0.1062],
+        [-0.5254, -0.1062],
+        [-0.5253, -0.1057],
+        [-0.5280, -0.1068],
+        [-0.5243, -0.1055]], grad_fn=<MmBackward0>)
+Output from v2:
+ tensor([[-0.5337, -0.1051],
+        [-0.5323, -0.1080],
+        [-0.5323, -0.1079],
+        [-0.5297, -0.1076],
+        [-0.5311, -0.1066],
+        [-0.5299, -0.1081]], grad_fn=<MmBackward0>)
+```
+
 ## 3.5 Hiding future words with causal attention
 
 ## 3.6 Extending single-head attention to multi-head attention
