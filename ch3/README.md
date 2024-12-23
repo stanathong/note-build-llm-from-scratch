@@ -766,6 +766,251 @@ Output from v2:
 
 ## 3.5 Hiding future words with causal attention
 
+* For many LLM tasks, **we want the self-attion mechanism to consider only the tokens that appear prior to the current position** when predicting the next token in a sequence.
+* Causal attention or Masked attention is a specialised form of self-attention.
+* **Causal attention restrics a model to only consider previous and current inputs**.
+* This is **in constrast** to the standard self-attention mechanism, which allows access to the entire input sequence at once!
+
+> The key concept is to ensure that each token can **only attend to previous tokens and itself and NOT future tokens**.
+> This constraint maintains the causality of the sequence, preventing the model from "cheating" by looking ahead at future data when making predictions.
+> Causal attention typically involves **masking the attention scores** so that each element i in the sequence can only attend to elements 1, 2, .., i and not to any element j > i.
+
+* Next, we're going to modify the standard self-attention mechanism to create a causal attention mechanism.
+* To achieve this in GPT-like LLMs, for each token processed, we **mask out the future tokens**, which come after the current token in the input text.
+
+> This can be implemented by modifying the attention mechanism with a triangular mask (upper triangular part is masked).
+> This ensures that each token only attends to previous tokens and not the future ones.
+
+<img width="675" alt="image" src="https://github.com/user-attachments/assets/a7c7a624-c791-4262-a1b6-e53468666a57" />
+
+* We mask out the attention weights above the diagonal, and **normalise the non-masked attention weights such that the attention weights sum to 1 in each row**.
+
+### 3.5.1 Apply a causal attention mask
+
+* To implement the steps to apply a causal attention mask - in order to obtain the masked attention weights, see the fig. below.
+
+<img width="678" alt="image" src="https://github.com/user-attachments/assets/af96897a-06d3-473b-81ee-deff240f99ac" />
+
+* Overview steps:
+    1) In: Attention scores (unnormalised) ----> Apply softmax ----> Out: Attention weights (normalised)
+    2) In: Attention weights (normalised) ----> Mask with 0's above diagonal ----> Out: 0 for scores at upper-triangle (now become unnormalised)
+    3) In: Masked attention scores (unnormalised) ----> Normalise row ----> Out: Masked attention weights (normalised)
+
+* Code: [code/sec-3.5.1-causal-attention-mask.py](code/sec-3.5.1-causal-attention-mask.py)
+```
+import torch
+import torch.nn as nn
+
+class SelfAttention_v2(nn.Module):
+    def __init__(self, d_in, d_out, qkv_bias=False):
+        super().__init__()
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+
+    def forward(self, x):
+         pass
+        
+# Create a sequence of token embeddings with 3 dimension
+# Input sentence: Your journey starts with one step
+inputs = torch.tensor(
+    [[0.43, 0.15, 0.89], # Your     (x^1)
+     [0.55, 0.87, 0.66], # journey  (x^2)
+     [0.57, 0.85, 0.64], # starts   (x^3)
+     [0.22, 0.58, 0.33], # with     (x^4)
+     [0.77, 0.25, 0.10], # one      (x^5)
+     [0.05, 0.80, 0.55]] # step     (x^6)
+)
+print('inputs.shape:', inputs.shape) # # torch.Size([6, 3])
+
+d_in = inputs.shape[-1] # The input embedding size, d_in = 3
+d_out = 2 # The output embedding size, d_out = 2
+
+torch.manual_seed(789)
+
+self_attention_v2 = SelfAttention_v2(d_in, d_out)
+```
+* **First**, compute the attention weights using the softmax function.
+
+```
+# First, compute attention weights using the softmax function
+queries = self_attention_v2.W_query(inputs) # torch.Size([6, 2])
+keys = self_attention_v2.W_key(inputs) # torch.Size([6, 2])
+attention_scores = queries @ keys.T # torch.Size([6, 6])
+attention_weights = torch.softmax(attention_scores / keys.shape[-1]**0.5, dim=-1)
+
+print(attention_weights)
+```
+* Output from the first step:
+```
+tensor([[0.1921, 0.1646, 0.1652, 0.1550, 0.1721, 0.1510],
+        [0.2041, 0.1659, 0.1662, 0.1496, 0.1665, 0.1477],
+        [0.2036, 0.1659, 0.1662, 0.1498, 0.1664, 0.1480],
+        [0.1869, 0.1667, 0.1668, 0.1571, 0.1661, 0.1564],
+        [0.1830, 0.1669, 0.1670, 0.1588, 0.1658, 0.1585],
+        [0.1935, 0.1663, 0.1666, 0.1542, 0.1666, 0.1529]],
+       grad_fn=<SoftmaxBackward0>)
+```
+
+* **Second**, 2.1 create a mask where the values above the diagonal are zero. This is done by using Pytorch's tril function.
+
+```
+# 2.1 create a mask where the values above the diagonal are zero
+context_length = attention_scores.shape[0] # 6
+# Return a lower triangle
+mask_simple = torch.tril(torch.ones(context_length, context_length))
+print(mask_simple)
+```
+
+* The resulting mask has 0 at the upper triangle and 1 at the diagonal and below.
+```
+tensor([[1., 0., 0., 0., 0., 0.],
+        [1., 1., 0., 0., 0., 0.],
+        [1., 1., 1., 0., 0., 0.],
+        [1., 1., 1., 1., 0., 0.],
+        [1., 1., 1., 1., 1., 0.],
+        [1., 1., 1., 1., 1., 1.]])
+```
+
+* **Second**, 2.2 Multiply this mask with the attention weights to zero-out the values above the diagonal:
+
+```
+# 2.2 multiply this mask with the attention weights to zero-out the values above the diagonal
+masked_simple = attention_weights * mask_simple
+print(masked_simple)
+```
+
+* The output of the mask shows that the elements above the diagonal are zeroed out!
+```
+tensor([[0.1921, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
+        [0.2041, 0.1659, 0.0000, 0.0000, 0.0000, 0.0000],
+        [0.2036, 0.1659, 0.1662, 0.0000, 0.0000, 0.0000],
+        [0.1869, 0.1667, 0.1668, 0.1571, 0.0000, 0.0000],
+        [0.1830, 0.1669, 0.1670, 0.1588, 0.1658, 0.0000],
+        [0.1935, 0.1663, 0.1666, 0.1542, 0.1666, 0.1529]],
+       grad_fn=<MulBackward0>)
+```
+
+* **Third**, renormalise the attention weights to sum up to 1 again in each row.
+* This can be achieved by dividing each element in each row by the sum in each row,
+
+```
+# Third, re-normalise attention weights to 1.
+row_sums = masked_simple.sum(dim=-1, keepdim=True)
+masked_simple_norm = masked_simple / row_sums
+print(masked_simple_norm)
+```
+
+* Output: an attiontion weight matrix where the attention weights above the diagonal are zeroed-out and the rows sum to 1.
+```
+tensor([[1.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
+        [0.5517, 0.4483, 0.0000, 0.0000, 0.0000, 0.0000],
+        [0.3800, 0.3097, 0.3103, 0.0000, 0.0000, 0.0000],
+        [0.2758, 0.2460, 0.2462, 0.2319, 0.0000, 0.0000],
+        [0.2175, 0.1983, 0.1984, 0.1888, 0.1971, 0.0000],
+        [0.1935, 0.1663, 0.1666, 0.1542, 0.1666, 0.1529]],
+       grad_fn=<DivBackward0>)
+```
+
+* Note:
+```
+row_sums = masked_simple.sum(dim=-1, keepdim=True) # torch.Size([6, 1])
+> tensor([[0.1921],
+        [0.3700],
+        [0.5357],
+        [0.6775],
+        [0.8415],
+        [1.0000]], grad_fn=<SumBackward1>)
+
+row_sums = masked_simple.sum(dim=-1, keepdim=False) # torch.Size([6])
+> tensor([0.1921, 0.3700, 0.5357, 0.6775, 0.8415, 1.0000],
+       grad_fn=<SumBackward1>)
+```
+
+> **Information leakage**\
+> When we apply a mask and then renormalize the attention weights, it might initially appear that information from future tokens (which we intend to mask) could still influence the current token because their values are part of the softmax calculation.
+> However, the key insight is that when we renormalize the attention weights after masking,
+> what we’re essentially doing is recalculating the softmax over a smaller subset (since masked positions don’t contribute to the softmax value).\
+> The mathematical elegance of softmax is that despite initially including all positions in the denominator, after masking and renormalizing, the effect of the masked positions is nullified - they don’t contribute to the softmax score in any meaningful way.
+> \
+> In simpler terms, after masking and renormalization, the distribution of attention weights is as if it was calculated only among the unmasked positions to begin with. This ensures there’s no information leakage from future (or otherwise masked) tokens as we intended.
+
+* We can improve the implementation of causal attention further by applying a mathematical property of the softmax function and implement the computation of the masked attention weights more efficiently.
+
+<img width="557" alt="image" src="https://github.com/user-attachments/assets/6a8d0818-c4ea-45c7-8d94-e68dd304dc33" />
+ 
+* Overview steps:
+    1) In: Attention scores (unnormalised) ----> Mask with -∞ above diagonal ----> Out: Masked attention scores (unnormalised)
+    2) In: Masked attention scores (unnormalised) ----> Apply softmax ----> Out: Masked attention weights (normalised)
+
+* The softmax function converts its inputs into a probability distribution.
+* When negative infinity values (-∞) are present in a row, the softmax function treats tthem as a zero probability.
+* This is because, mathematically, e^(-∞) = 1 / e^(∞) = 0.
+
+```
+# Masked upper triangular with -inf
+
+# Upper triangular part
+mask = torch.triu(torch.ones(context_length, context_length), diagonal=1)
+masked = attention_scores.masked_fill(mask.bool(), -torch.inf)
+print(masked) 
+```
+
+* The output mask is:
+
+```
+tensor([[0.2899,   -inf,   -inf,   -inf,   -inf,   -inf],
+        [0.4656, 0.1723,   -inf,   -inf,   -inf,   -inf],
+        [0.4594, 0.1703, 0.1731,   -inf,   -inf,   -inf],
+        [0.2642, 0.1024, 0.1036, 0.0186,   -inf,   -inf],
+        [0.2183, 0.0874, 0.0882, 0.0177, 0.0786,   -inf],
+        [0.3408, 0.1270, 0.1290, 0.0198, 0.1290, 0.0078]],
+       grad_fn=<MaskedFillBackward0>)
+```
+
+* Next, we simply apply the softmax function in which the -∞ will become 0.
+
+```
+# Apply the softmax function
+attention_weights = torch.softmax(masked / keys.shape[-1]**0.5, dim=1)
+print(attention_weights)
+```
+
+* Output:
+
+```
+tensor([[1.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
+        [0.5517, 0.4483, 0.0000, 0.0000, 0.0000, 0.0000],
+        [0.3800, 0.3097, 0.3103, 0.0000, 0.0000, 0.0000],
+        [0.2758, 0.2460, 0.2462, 0.2319, 0.0000, 0.0000],
+        [0.2175, 0.1983, 0.1984, 0.1888, 0.1971, 0.0000],
+        [0.1935, 0.1663, 0.1666, 0.1542, 0.1666, 0.1529]],
+       grad_fn=<SoftmaxBackward0>)
+```
+
+* Once we have attention weights, we can compute the context vectors as
+
+```
+# Compute the context vector
+values = self_attention_v2.W_value(inputs) # torch.Size([6, 2])
+context_vector = attention_weights @ values
+print(context_vector)
+```
+
+* Output:
+```
+tensor([[-0.0872,  0.0286],
+        [-0.0991,  0.0501],
+        [-0.0999,  0.0633],
+        [-0.0983,  0.0489],
+        [-0.0514,  0.1098],
+        [-0.0754,  0.0693]], grad_fn=<MmBackward0>)
+```
+
+### 3.5.2 Masking additional attention weights with dropout
+
+### 3.5.3 Implementing a compact causal attention class
+
 ## 3.6 Extending single-head attention to multi-head attention
 
 ## Summary
