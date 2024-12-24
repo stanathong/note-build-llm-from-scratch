@@ -1139,7 +1139,111 @@ tensor([[[0.4300, 0.1500, 0.8900],
 
 * Code: [code/sec-3.5.3-causal-attention-with-dropout.py](ch3/code/sec-3.5.3-causal-attention-with-dropout.py)
 
+```
+import torch
+import torch.nn as nn
+
+class CausalAttention(nn.Module):
+    def __init__(self, d_in, d_out, context_length, dropout, qkv_bias=False):
+        super().__init__()
+        self.d_out = d_out
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+        # Add dropout
+        self.dropout = nn.Dropout(dropout)
+        # reigister_buffers helps with moving buffers to the appropriate devices (CPU/GPU)
+        self.register_buffer(
+            'mask', # name
+            # buffer to register
+            torch.triu(torch.ones(context_length, context_length), diagonal=1)
+        )
+    
+    def forward(self, inputs):
+        b, num_tokens, d_in = inputs.shape
+        queries = self.W_query(inputs)
+        keys = self.W_key(inputs)
+        values = self.W_value(inputs)
+
+        # Since index 0 is batch, we will do transpose between dim 1 and 2
+        # keeping the batch dimension at the first position (0)
+        attention_scores = queries @ keys.transpose(1,2)
+        # In Pytorch, operation with _ trailing are performed in-place
+        attention_scores.masked_fill_(
+            self.mask.bool()[:num_tokens, :num_tokens], -torch.inf)
+        attention_weights = torch.softmax(
+            attention_scores / keys.shape[-1] ** 0.5, dim=-1)
+        attention_weights = self.dropout(attention_weights)
+
+        context_vector = attention_weights @ values
+        return context_vector
+```
+
+> Note on `self.register_buffers()` call in `__init__`.
+> This function is not strictly neccessary for all use cases but offers several advantages here.
+> For example, when we use this class, buffers are automatically moved to the appropriate device (CPU or GPU) along with our model, which will be relevant when training our LLM.
+> As a result, we don't need to manually ensure these tensors are on the same device as your model parameters, avoiding device mismatch errors.
+
+* Here's how we call the `CausalAttention` class.
+
+```
+torch.manual_seed(123)
+
+inputs = torch.tensor(
+    [[0.43, 0.15, 0.89], # Your     (x^1)
+     [0.55, 0.87, 0.66], # journey  (x^2)
+     [0.57, 0.85, 0.64], # starts   (x^3)
+     [0.22, 0.58, 0.33], # with     (x^4)
+     [0.77, 0.25, 0.10], # one      (x^5)
+     [0.05, 0.80, 0.55]] # step     (x^6)
+)
+batch = torch.stack((inputs, inputs), dim=0)
+print('batch.shape:', batch.shape) # torch.Size([2, 6, 3])
+
+context_length = batch.shape[1] # 6
+d_in = inputs.shape[-1] # The input embedding size, d_in = 3
+d_out = 2 # The output embedding size, d_out = 2
+
+# droput = 0.0
+causal_attention = CausalAttention(d_in, d_out, context_length, 0.0) 
+context_vector = causal_attention(batch) 
+print(context_vector.shape) # torch.Size([2, 6, 2])
+print(context_vector)
+```
+
+* The resulting context vector has 3-dimensional tensor where each token is now represented by two-dimensional embedding.
+
+```
+torch.Size([2, 6, 2])
+tensor([[[-0.4519,  0.2216],
+         [-0.5874,  0.0058],
+         [-0.6300, -0.0632],
+         [-0.5675, -0.0843],
+         [-0.5526, -0.0981],
+         [-0.5299, -0.1081]],
+
+        [[-0.4519,  0.2216],
+         [-0.5874,  0.0058],
+         [-0.6300, -0.0632],
+         [-0.5675, -0.0843],
+         [-0.5526, -0.0981],
+         [-0.5299, -0.1081]]], grad_fn=<UnsafeViewBackward0>)
+```
 
 ## 3.6 Extending single-head attention to multi-head attention
+
+* The next step is the final step where we will be extending the previously implemented causal attention class over multiple heads. This is called **multi-head attention**.
+
+> * The term **multi-head refers to dividing the attention mechanism into multiple heads**, each operating independently.
+> * A single causal attention module can be considered a single-head attention, where there is only one set of attention weights processing the input sequentially.
+
+* Expanding from causal attenion to multi-head attention involves:
+    * First, we will intuitively build a multi-head attention module by stacking multiple `CausalAttention` modules, we have built eariler.
+    * Second, we will implement the same multi-head attention module into a more complicated but more computationally efficient way. 
+
+## 3.6.1 Stacking multiple single-head attention layers
+
+## 3.6.2 Implementing multi-head attention with weight splits
+
 
 ## Summary
