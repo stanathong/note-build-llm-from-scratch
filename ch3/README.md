@@ -1009,7 +1009,136 @@ tensor([[-0.0872,  0.0286],
 
 ### 3.5.2 Masking additional attention weights with dropout
 
+**Background:**
+
+> * `Dropout` in deep learning is a technique where randomly selected hidden layer units are ignored during training = dropping them out.
+> * This method helps prevent overfitting by ensuring that a model does not become overly reliant on any specific set of hidden layer units.
+> * `Dropout` is only used during training and is disabled afterwards.
+
+* In the transformer architecture, including models like GPT, dropout in the attention mechanism is typically applied at two specific times:
+    * after calculating the attention weights **(This is a more common approach in practice)** or
+    * after applying the attention weights to the contect vector.
+
+* As an example, we use a dropout rate of 50% i.e. masking out half of the attention weights. This is for an illustration purpose only.
+* When we train the GPT model, we will use a lower dropout rate, such as 0.1 or 0.2.
+
+```
+import torch
+
+torch.manual_seed(123)
+dropout = torch.nn.Dropout(0.5) # dropout rate of 50%
+example = torch.ones(6,6)
+print('Before dropout:\n', example)
+print('After dropout:\n', dropout(example))
+```
+
+* Output: Before dropout
+```
+ tensor([[1., 1., 1., 1., 1., 1.],
+        [1., 1., 1., 1., 1., 1.],
+        [1., 1., 1., 1., 1., 1.],
+        [1., 1., 1., 1., 1., 1.],
+        [1., 1., 1., 1., 1., 1.],
+        [1., 1., 1., 1., 1., 1.]])
+```
+
+* Output: After dropout
+```
+ tensor([[2., 2., 0., 2., 2., 0.],
+        [0., 0., 0., 2., 0., 2.],
+        [2., 2., 2., 2., 0., 2.],
+        [0., 2., 2., 0., 0., 2.],
+        [0., 2., 0., 2., 0., 2.],
+        [0., 2., 2., 2., 2., 0.]])
+```
+
+* We can see that, after dropout, about half of the elements in the matrix are randomly set to 0.
+* **To compensate for the reduction in active elements, the values of the remaining elements in the matrix are scaled up by a factor of 1/0.5 = 2.0.**
+* This scaling is crucial to maintain the overall balance of of the attention weights.
+* This ensures that the average **influence of the attention mechanism remains consistent** during both training and inference phases.
+
+<img width="588" alt="image" src="https://github.com/user-attachments/assets/7b4be222-3fd4-4386-9aa7-688ad79d6c54" />
+
+* The next steps is to apply dropout to the attention weight matrix itself.
+
+
+# Apply dropout to the attention weight matrix
+
+```
+torch.manual_seed(123)
+print(dropout(attention_weights))
+```
+
+* **Original attention weights**
+
+```
+tensor([[1.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
+        [0.5517, 0.4483, 0.0000, 0.0000, 0.0000, 0.0000],
+        [0.3800, 0.3097, 0.3103, 0.0000, 0.0000, 0.0000],
+        [0.2758, 0.2460, 0.2462, 0.2319, 0.0000, 0.0000],
+        [0.2175, 0.1983, 0.1984, 0.1888, 0.1971, 0.0000],
+        [0.1935, 0.1663, 0.1666, 0.1542, 0.1666, 0.1529]],
+       grad_fn=<SoftmaxBackward0>)
+```
+
+* **Attention weights after applying dropout**
+```
+tensor([[2.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
+        [0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
+        [0.6380, 0.6816, 0.6804, 0.0000, 0.0000, 0.0000],
+        [0.0000, 0.5090, 0.5085, 0.0000, 0.0000, 0.0000],
+        [0.0000, 0.4120, 0.0000, 0.3869, 0.0000, 0.0000],
+        [0.0000, 0.3418, 0.3413, 0.3308, 0.3249, 0.0000]],
+       grad_fn=<MulBackward0>)
+```
+
+* The next step is to implement a concise Python class with causal attention and dropout masking.
+
 ### 3.5.3 Implementing a compact causal attention class
+
+* **Goal**: Incorporate the causal attention and dropout modifications into the SelfAttention Python class.
+* Before going ahead, we need to make sure that the code can handle batches consisting of more than one input so that the CausalAttention class supports the batch outputs produced by the data loader.
+
+* For simplicity, to simulate such batch inputs, we duplicate the input text example:
+ 
+```
+inputs = torch.tensor(
+    [[0.43, 0.15, 0.89], # Your     (x^1)
+     [0.55, 0.87, 0.66], # journey  (x^2)
+     [0.57, 0.85, 0.64], # starts   (x^3)
+     [0.22, 0.58, 0.33], # with     (x^4)
+     [0.77, 0.25, 0.10], # one      (x^5)
+     [0.05, 0.80, 0.55]] # step     (x^6)
+)
+
+batch = torch.stack((inputs, inputs), dim=0)
+print(batch.shape)
+print(batch)
+```
+
+* This batch contains 2 inputs with 6 tokens each, each token has embedding dimension 3.
+
+```
+torch.Size([2, 6, 3])
+tensor([[[0.4300, 0.1500, 0.8900],
+         [0.5500, 0.8700, 0.6600],
+         [0.5700, 0.8500, 0.6400],
+         [0.2200, 0.5800, 0.3300],
+         [0.7700, 0.2500, 0.1000],
+         [0.0500, 0.8000, 0.5500]],
+
+        [[0.4300, 0.1500, 0.8900],
+         [0.5500, 0.8700, 0.6600],
+         [0.5700, 0.8500, 0.6400],
+         [0.2200, 0.5800, 0.3300],
+         [0.7700, 0.2500, 0.1000],
+         [0.0500, 0.8000, 0.5500]]])
+```
+
+* Next is the implementation of the CausalAttention class with dropout and causal mask components.
+
+* Code: [code/sec-3.5.3-causal-attention-with-dropout.py](ch3/code/sec-3.5.3-causal-attention-with-dropout.py)
+
 
 ## 3.6 Extending single-head attention to multi-head attention
 
