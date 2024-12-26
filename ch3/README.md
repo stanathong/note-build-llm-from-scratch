@@ -1237,11 +1237,110 @@ tensor([[[-0.4519,  0.2216],
 > * The term **multi-head refers to dividing the attention mechanism into multiple heads**, each operating independently.
 > * A single causal attention module can be considered a single-head attention, where there is only one set of attention weights processing the input sequentially.
 
+<img width="733" alt="image" src="https://github.com/user-attachments/assets/cd2be325-fde3-48df-afbb-3fd73fbe9716" />
+
 * Expanding from causal attenion to multi-head attention involves:
     * First, we will intuitively build a multi-head attention module by stacking multiple `CausalAttention` modules, we have built eariler.
     * Second, we will implement the same multi-head attention module into a more complicated but more computationally efficient way. 
 
 ## 3.6.1 Stacking multiple single-head attention layers
+
+* In practical terms, **implementing multi-head attention involves creating multiple instances of the self-attention mechanism**.
+* Each self-attention has its own weights with its own output, in which all will be combined to generate the final output. This is done by **concatenate the resulting context vectors along the column dimension.**.
+* Note that, using multiple instances of the self-attention can be computationally intensive, it's crucial for complex pattern recognition as that of transformer-based LLMs.
+* Below picture illustrates the structure of **a multi-head attention module, which consists of multiple single-head attention modules stacked on top of each other**.
+
+<img width="733" alt="image" src="https://github.com/user-attachments/assets/df4cf459-55d7-4e3b-ae1e-a860b46a524f" />
+
+> * The main idea behind multi-head attention is to run the attention mechanism multiple times (in parallel) with different, **learned linear projections** - the results of multiplying the input data (like the query, key and value vectors in attention mechanisms) by a weight matrix.
+
+* In the implementation, we can implement a simple MultiHeadAttetionWrapper class by stacks multiple instances of our previously implemented CausalAttention module.
+
+* If we have 2 attention heads (num_heads = 2) and CausalAttention output dimension d_out = 2, we get a 4-dimensional context vector (from d_out * num_heads = 2 * 2 = 4).
+
+<img width="579" alt="image" src="https://github.com/user-attachments/assets/0549d0a6-02da-4cdf-a7db-6a02e63f025a" />
+
+* Code: [code/sec-3.6.1-wrapper-class-for-multi-head-attention.py](code/sec-3.6.1-wrapper-class-for-multi-head-attention.py)
+
+```
+class MultiHeadAttentionWrapper(nn.Module):
+    def __init__(self, d_in, d_out, context_length, 
+                 dropout, num_heads, qkv_bias=False):
+        super().__init__()
+        # Contain a list of self-attention
+        self.heads = nn.ModuleList(
+            [CausalAttention(
+                d_in, d_out, context_length, dropout, qkv_bias
+            ) for _ in range(num_heads)]
+        )
+    
+    def forward(self, x):
+        # Concat the results along the column axis
+        return torch.cat([head(x) for head in self.heads], dim=-1)
+```
+
+* Defining inputs as two batches of the same data of size 6 x 3.
+
+```
+torch.manual_seed(123)
+
+inputs = torch.tensor(
+    [[0.43, 0.15, 0.89], # Your     (x^1)
+     [0.55, 0.87, 0.66], # journey  (x^2)
+     [0.57, 0.85, 0.64], # starts   (x^3)
+     [0.22, 0.58, 0.33], # with     (x^4)
+     [0.77, 0.25, 0.10], # one      (x^5)
+     [0.05, 0.80, 0.55]] # step     (x^6)
+)
+batch = torch.stack((inputs, inputs), dim=0)
+print('batch.shape:', batch.shape) # torch.Size([2, 6, 3])
+```
+
+* Executing the MultiHeadAttentionWrapper class wiht the batch input.
+
+```
+context_length = batch.shape[1] # 6
+d_in = inputs.shape[-1] # The input embedding size, d_in = 3
+d_out = 2 # The output embedding size, d_out = 2
+
+# 2-head attention
+multi_head_attention = MultiHeadAttentionWrapper(
+    d_in, d_out, context_length, dropout=0.0, num_heads=2)
+
+context_vectors = multi_head_attention(batch)
+print('context_vectors.shape :', context_vectors.shape)
+print(context_vectors)
+```
+
+* Output: A context vector of size (2, 6, 4).
+    * 2 input texts. Note because the input texts are duplicated, we have the exact context vectors.
+    * 6 tokens in each input.
+    * 4 from 2 output embedding size (d_out) * 2 from the number of attention heads. As a result, we have 4-d embedding for each token. 
+
+```
+context_vectors.shape : torch.Size([2, 6, 4])
+tensor([[[-0.4519,  0.2216,  0.4772,  0.1063],
+         [-0.5874,  0.0058,  0.5891,  0.3257],
+         [-0.6300, -0.0632,  0.6202,  0.3860],
+         [-0.5675, -0.0843,  0.5478,  0.3589],
+         [-0.5526, -0.0981,  0.5321,  0.3428],
+         [-0.5299, -0.1081,  0.5077,  0.3493]],
+
+        [[-0.4519,  0.2216,  0.4772,  0.1063],
+         [-0.5874,  0.0058,  0.5891,  0.3257],
+         [-0.6300, -0.0632,  0.6202,  0.3860],
+         [-0.5675, -0.0843,  0.5478,  0.3589],
+         [-0.5526, -0.0981,  0.5321,  0.3428],
+         [-0.5299, -0.1081,  0.5077,  0.3493]]], grad_fn=<CatBackward0>)
+```
+
+* In the current implementation, we proceed each head sequentially in the forward method.
+
+```
+torch.cat([head(x) for head in self.heads])
+```
+
+* We can improve this to process the heads in parallel by computing the outputs for all attention heads simulaneously via matrix multiplication.
 
 ## 3.6.2 Implementing multi-head attention with weight splits
 
