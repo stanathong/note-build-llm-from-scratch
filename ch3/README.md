@@ -1406,6 +1406,8 @@ torch.cat([head(x) for head in self.heads], dim=-1)
 * This is done by splitting the input into multiple head by reshaping tensors.
 * **The key operation is to split the d_out dimension into num_heads and head_dim, where head_dim = d_out/num_heads.**
 * This is achieved by **reshaping (b,num_tokens,d_out) to (b,num_tokens,num_heads,head_dim)**.
+* By transposing to bring the num_heads dimension before the num_tokens dimension, this results in a shape of (b, num_heads, num_tokens, head_dim). **This is important as it correctly aligns the queries, keys and values across different heads and performing batched matrix multiplications efficiently.**
+
 * Summary of matrix multiplication where
     * d_in: in embedding vector e.g. 3
     * num_token: context length e.g. 6
@@ -1449,7 +1451,219 @@ context_vector = context_vector.view(b, n_tokens, d_out)
 
 <img width="576" alt="image" src="https://github.com/user-attachments/assets/03d34db7-c4dc-455f-98ba-359258d6c155" />
 
+* Code: [code/sec-3.6.2-multi-head-attention.py](code/sec-3.6.2-multi-head-attention.py)
+
+**class MultiHeadAttention**
+```
+import torch
+import torch.nn as nn
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, d_in, d_out,
+                context_length, dropout, num_heads, qkv_bias=False):
+        super().__init__()
+        assert (d_out % num_heads == 0), \
+               'd_out must be divisible by num_heads'
+        
+        self.d_out = d_out
+        self.num_heads = num_heads
+        # Reduce the projection dim to match the desired output dim
+        self.head_dim = d_out // num_heads
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)  
+        # Use the linear layer to combine head outputs
+        self.out_proj = nn.Linear(d_out, d_out) 
+        self.droput = nn.Dropout(dropout)
+        self.register_buffer(
+            # This is dictionary
+            'mask',
+            torch.triu(torch.ones(context_length, context_length), diagonal=1),
+        )
+
+    def forward(self, x):
+        b, num_tokens, d_in = x.shape
+        keys = self.W_key(x)      # (b, num_tokens, d_out) 
+        queries = self.W_query(x) # (b, num_tokens, d_out) 
+        values = self.W_value(x)  # (b, num_tokens, d_out) 
+
+        #  Transform (b, num_tokens, d_out) to 
+        #            (b, num_tokens, self.num_heads, self.head_dim)
+        keys = keys.view(b, num_tokens, self.num_heads, self.head_dim)
+        queries = queries.view(b, num_tokens, self.num_heads, self.head_dim)
+        values = values.view(b, num_tokens, self.num_heads, self.head_dim)
+
+        # Tranform (b, num_tokens, self.num_heads, self.head_dim) to 
+        #          (b, self.num_heads, num_tokens, self.head_dim)
+        keys = keys.transpose(1, 2)
+        queries = queries.transpose(1, 2)
+        values = values.transpose(1, 2)
+
+        # Compute the dot product for each head
+        # queries: (b, self.num_heads, num_tokens, self.head_dim) @
+        # keys:    (b, self.num_heads, self.head_dim, num_tokens)
+        #       =  (b, self.num_heads, num_tokens, num_tokens)
+        attention_scores = queries @ keys.transpose(2, 3)
+        
+        # Mask truncated to the number of tokens
+        mask_bool = self.mask.bool()[:num_tokens, :num_tokens]
+        attention_scores.masked_fill_(mask_bool, -torch.inf)
+
+        attention_weights = torch.softmax(
+            attention_scores / keys.shape[-1]**0.5, dim=-1)
+        attention_weights = self.droput(attention_weights)
+
+        # Compute context vector based on atteiont weights and values
+        # attention_weights @ values =
+        #    (b, self.num_heads, num_tokens, num_tokens) @
+        #        (b, self.num_heads, num_tokens, self.head_dim)
+        #        0       1             2            3
+        #    =  (b, self.num_heads, num_tokens, self.head_dim)
+        # transpose(1, 2) -> (b, num_tokens, self.num_heads, self.head_dim)
+        context_vector = (attention_weights @ values).transpose(1, 2)
+        # Combine heads where self.d_out = self.num_heads * self.head_dim
+        # Note: .contiguous() ensure tensor’s data is reorganized in memory 
+        context_vector = context_vector.contiguous().view(
+            b, num_tokens, self.d_out)
+
+        # Add optional linear projection
+        context_vector = self.out_proj(context_vector)
+        return context_vector
+```
+
+**Usage:**
+
+```
+torch.manual_seed(123)
+
+inputs = torch.tensor(
+    [[0.43, 0.15, 0.89], # Your     (x^1)
+     [0.55, 0.87, 0.66], # journey  (x^2)
+     [0.57, 0.85, 0.64], # starts   (x^3)
+     [0.22, 0.58, 0.33], # with     (x^4)
+     [0.77, 0.25, 0.10], # one      (x^5)
+     [0.05, 0.80, 0.55]] # step     (x^6)
+)
+batch = torch.stack((inputs, inputs), dim=0)
+print('batch.shape:', batch.shape) # torch.Size([2, 6, 3])
+
+context_length = batch.shape[1] # 6
+d_in = inputs.shape[-1] # The input embedding size, d_in = 3
+num_heads = 2
+d_out_per_head = 2
+d_out = num_heads * d_out_per_head # The output embedding size, d_out = 2
+
+# 2-head attention
+multi_head_attention = MultiHeadAttention(
+    d_in, d_out, context_length, dropout=0.0, num_heads=2)
+
+context_vectors = multi_head_attention(batch)
+print('context_vectors.shape :', context_vectors.shape)
+print(context_vectors)
+```
+
+**Output:**
+```
+context_vectors.shape : torch.Size([2, 6, 4])
+tensor([[[ 0.1184,  0.3120, -0.0847, -0.5774],
+         [ 0.0178,  0.3221, -0.0763, -0.4225],
+         [-0.0147,  0.3259, -0.0734, -0.3721],
+         [-0.0116,  0.3138, -0.0708, -0.3624],
+         [-0.0117,  0.2973, -0.0698, -0.3543],
+         [-0.0132,  0.2990, -0.0689, -0.3490]],
+
+        [[ 0.1184,  0.3120, -0.0847, -0.5774],
+         [ 0.0178,  0.3221, -0.0763, -0.4225],
+         [-0.0147,  0.3259, -0.0734, -0.3721],
+         [-0.0116,  0.3138, -0.0708, -0.3624],
+         [-0.0117,  0.2973, -0.0698, -0.3543],
+         [-0.0132,  0.2990, -0.0689, -0.3490]]], grad_fn=<ViewBackward0>)
+```
+
+* **The key operation is to split the d_out dimension into num_heads and head_dim, where head_dim = d_out/num_heads.**
+* This is achieved by **reshaping (b,num_tokens,d_out) to (b,num_tokens,num_heads,head_dim)**.
+* By transposing to bring the num_heads dimension before the num_tokens dimension, this results in a shape of (b, num_heads, num_tokens, head_dim). **This is important as it correctly aligns the queries, keys and values across different heads and performing batched matrix multiplications efficiently.**
 
 
+* To illustrate this batched matrix multiplication, code: [code/sec-3.6.2-batched-matrix-multiplication.py](
+code/sec-3.6.2-batched-matrix-multiplication.py).
+
+```
+# (b, num_heads, num_tokens, head_dim) = (1, 2, 3, 4)
+a = torch.tensor([[[[0.2745, 0.6584, 0.2775, 0.8573],
+                    [0.8993, 0.0390, 0.9268, 0.7388],
+                    [0.7179, 0.7058, 0.9156, 0.4340]],
+
+                   [[0.0772, 0.3565, 0.1479, 0.5331],
+                    [0.4066, 0.2318, 0.4545, 0.9737],
+                    [0.4606, 0.5159, 0.4220, 0.5786]]]])
+
+# a:        (b, num_heads, num_tokens, head_dim) = (1, 2, 3, 4) @
+# a.t(2,3): (b, num_heads, head_dim, num_tokens) = (1, 2, 4, 3)
+#      = (b, num_heads, num_tokens, num_tokens)
+print(a @ a.transpose(2, 3))
+```
+
+**Result:** In which we the top one is the first head and the second one is second head.
+
+```
+tensor([[[[1.3208, 1.1631, 1.2879],
+          [1.1631, 2.2150, 1.8424],
+          [1.2879, 1.8424, 2.0402]],
+
+         [[0.4391, 0.7003, 0.5903],
+          [0.7003, 1.3737, 1.0620],
+          [0.5903, 1.0620, 0.9912]]]])
+```
+
+* If we were to compute the matrix multiplication for each head separately:
+
+```
+first_head = a[0,0,:,:]
+first_res = first_head @ first_head.T
+print('First head:\n', first_res)
+
+second_head = a[0,1,:,:]
+second_res = second_head @ second_head.T
+print('Second head:\n', second_res)
+
+```
+
+* **Result:** 
+
+```
+First head:
+ tensor([[1.3208, 1.1631, 1.2879],
+        [1.1631, 2.2150, 1.8424],
+        [1.2879, 1.8424, 2.0402]])
+
+Second head:
+ tensor([[0.4391, 0.7003, 0.5903],
+        [0.7003, 1.3737, 1.0620],
+        [0.5903, 1.0620, 0.9912]])  
+```
+
+* They both have the exact same results.
+
+* **In the MultiHeadAttention class**, we add an output projection layer (self.out_proj) after combining the heads.
+* This output projection layer is not strictly necessary but it is commonly used in many LLM architectures.
+
+> * The smallest GPT-2 model (117 million parameters) has 12 attention heads and a context vector embedding size of 768.
+> * The largest GPT-2 model (1.5 billion parameters) has 25 attention heads and a context vector embedding size of 1600.
+> * The embedding sizes of the token inputs and context embeddings are the same in GPT models (d_in = d_out).
 
 ## Summary
+
+* Attention mechanisms transform input elements into enhanced context vector representations that incorporate information about all inputs.
+* A self-attention mechanism computes the context vector representation as a weighted sum over the inputs.
+* In a simplified attention mechanism, the attention weights are computed via dot products.
+* A dot product is a concise way of multiplying two vectors element-wise and then summing the products.
+* Matrix multiplications make computations more efficiently and compactly by replacing nested for loops.
+* In self-attention mechanisms used in LLMs, also called scaled-dot product attention, we include trainable weight matrices to compute intermediate transformations of the inputs: queries, values, and keys.
+* When working with LLMs that read and generate text from left to right, we add a causal attention mask to prevent the LLM from accessing future tokens.
+* In addition to causal attention masks to zero-out attention weights, we can add a dropout mask to reduce overfitting in LLMs.
+* The attention modules in transformer-based LLMs involve multiple instances of causal attention, which is called multi-head attention.
+* We can create a multi-head attention module by stacking multiple instances of causal attention modules.
+* A more efficient way of creating multi-head attention modules involves batched matrix multiplications.
+
+
