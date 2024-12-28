@@ -1342,6 +1342,47 @@ torch.cat([head(x) for head in self.heads])
 
 * We can improve this to process the heads in parallel by computing the outputs for all attention heads simulaneously via matrix multiplication.
 
+## Excercise 3.2 Returning two-dimensional embedding vectors
+
+> Change the input arguments for the MultiHeadAttentionWrapper(..., num_heads=2) call such that
+> the output context vectors are two-dimensional instead of four dimensional while keeping the setting num_heads=2.
+> Hint: You don't need to modify the class implementation, you just have to change one of the other input arguments.
+
+* Instead of returning the context vector with the last dim equal to 4, from (2, 6, 4), due to the output dim = 2 and num_heads = 2.
+* We would like to have the last dim equalt ot 2 in which the context vector has the final output of size (2, 6, 2).
+* This can be done by reducing d_out from 2 to 1.
+
+* Code: [code/excercise-3.2.py](code/excercise-3.2.py)
+
+```
+### To obtain the size of (batch,6,2) without reducing num_heads
+d_out = 1 # Reduce d_out
+multi_head_attention = MultiHeadAttentionWrapper(
+    d_in, d_out, context_length, dropout=0.0, num_heads=2)
+
+context_vectors = multi_head_attention(batch)
+print('context_vectors.shape :', context_vectors.shape) # context_vectors.shape : torch.Size([2, 6, 2])
+print(context_vectors)
+```
+
+* Output:
+```
+context_vectors.shape : torch.Size([2, 6, 2])
+tensor([[[0.0189, 0.2729],
+         [0.2181, 0.3037],
+         [0.2804, 0.3125],
+         [0.2830, 0.2793],
+         [0.2476, 0.2541],
+         [0.2748, 0.2513]],
+
+        [[0.0189, 0.2729],
+         [0.2181, 0.3037],
+         [0.2804, 0.3125],
+         [0.2830, 0.2793],
+         [0.2476, 0.2541],
+         [0.2748, 0.2513]]], grad_fn=<CatBackward0>)
+```
+
 ## 3.6.2 Implementing multi-head attention with weight splits
 
 
