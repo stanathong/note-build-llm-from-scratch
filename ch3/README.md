@@ -1385,5 +1385,71 @@ tensor([[[0.0189, 0.2729],
 
 ## 3.6.2 Implementing multi-head attention with weight splits
 
+* In the previous section, we created a MultiHeadAttentionWrapper to implement multi-head attention by stacking multiple single-head attention modules.
+    1. Instantiate single-head attention for a total of `num_head` and stack them together.    
+    2. Concatenate the results (along the column axis i.e. dim=-1)
+
+```
+# 1
+self.heads = nn.ModuleList([CausalAttention(d_in, d_out, context_length, dropout, qkv_bias)
+      for _ in range(num_heads)])
+```
+
+```
+# 2
+torch.cat([head(x) for head in self.heads], dim=-1)
+```
+* By implementing multiple heads by instantiating CausalAttention objects for each attention head, they performs attention mechanism independently then concatenate the results from each head into a single context vector.
+
+* Instead of maintaining two separate classes: MultiHeadAttentionWrapper and CausalAttention, we can combine them into a single MultiHeadAttention class. 
+* The MultiHeadAttention class integrates the multi-head functionality within a single class.
+* This is done by splitting the input into multiple head by reshaping tensors.
+* **The key operation is to split the d_out dimension into num_heads and head_dim, where head_dim = d_out/num_heads.**
+* This is achieved by **reshaping (b,num_tokens,d_out) to (b,num_tokens,num_heads,head_dim)**.
+* Summary of matrix multiplication where
+    * d_in: in embedding vector e.g. 3
+    * num_token: context length e.g. 6
+    * d_out: out embedding vector e.g. 2
+    * num_heads: number of attention head e.g. 2
+    * head_dim: d_out for each head = d_out // num_heads = 2 // 2 = 1
+
+```
+W_query, W_key, W_value shape: d_in x d_out = 3 x 2
+out_project shape: d_out x d_out = 2 x 2
+x input: b x num_token x d_in = 2 x 6 x 3
+
+keys = W_key(x) = (3 x 2) * (b x 6 x 3) =  b x 6 x 2 = 2 x 6 x 2
+queries = W_query(x) = (3 x 2) * (b x 6 x 3) =  b x 6 x 2 = 2 x 6 x 2
+values = W_value(x) = (3 x 2) * (b x 6 x 3) =  b x 6 x 2 = 2 x 6 x 2
+
+keys = keys.view(b, num_token, num_head, head_dim) = b x 6 x 2 x 1 = 2 x 6 x 2 x 1
+queries = queries.view(b, num_token, num_head, head_dim) = b x 6 x 2 x 1 = 2 x 6 x 2 x 1
+values = values.view(b, num_token, num_head, head_dim) = b x 6 x 2 x 1 = 2 x 6 x 2 x 1
+
+keys = keys.transpose(1,2) -> from (2 x 6 x 2 x 1) to (b x n_head x n_token x head_dim) = (b x 2 x 6 x 1)
+queries = from (2 x 6 x 2 x 1) to (b x n_head x n_token x head_dim) = (b x 2 x 6 x 1)
+values = from (2 x 6 x 2 x 1) to (b x n_head x n_token x head_dim) = (b x 2 x 6 x 1)
+
+attention_scores = queries @ keys.transpose(2,3)
+                 = (b x n_head x n_token x head_dim) @ b x n_head x head_dim x n_token)
+                 = (b x n_head x n_token x n_token) = (b x 2 x 6 x 6)
+attention_weight = (b x n_head x n_token x n_token) = (b x 2 x 6 x 6)
+
+context_vector = (attention_weight @ values).transpose(1,2)
+               = (b x n_head x n_token x n_token @ b x n_head x n_token x head_dim).transpose(1,2)
+                               ----------------                 ------------------
+               = (b x n_head x n_token x head_dim).transpose(1,2)
+               = (b x n_head x head_dim x n_token)
+               ~ (b x (n_head x head_dim) x n_token)
+               ~           d_out
+context_vector = context_vector.view(b, n_tokens, d_out)
+```
+
+* The MultiHeadAttention class starts with multi-head layer then internally splits this layer into individual attention heads.
+
+<img width="576" alt="image" src="https://github.com/user-attachments/assets/03d34db7-c4dc-455f-98ba-359258d6c155" />
+
+
+
 
 ## Summary
