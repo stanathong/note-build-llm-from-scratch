@@ -58,6 +58,13 @@ Token ID = 2: tensor([[ 0.6957, -1.8061, -1.1589,  0.3255, -0.6315]],
 idx = torch.tensor([2,3,1])
 print(idx)
 print(embedding(idx))
+'''
+tensor([2, 3, 1])
+tensor([[ 0.6957, -1.8061, -1.1589,  0.3255, -0.6315],
+        [-2.8400, -0.7849, -1.4096, -0.4076,  0.7953],
+        [ 1.3010,  1.2753, -0.2010, -0.1606, -0.4015]],
+       grad_fn=<EmbeddingBackward0>)
+'''
 
 # Using nn.Linear
 
