@@ -49,12 +49,394 @@ GPT_CONFIG_124M = {
 
 <img width="607" alt="image" src="https://github.com/user-attachments/assets/95cf6f00-f83c-402a-9518-a382af2fd86c" />
 
-* Next: To implement the code.
+* Code: [code/section-4.1-dummy-gpt-model.py](code/section-4.1-dummy-gpt-model.py)
 
+* Dummy GPT Model
+```
+import torch
+import torch.nn as nn
+import tiktoken
+
+GPT_CONFIG_124M = {
+    'vocab_size': 50257,        # Vocabulary size
+    'context_length': 1024,     # Context length
+    'emb_dim': 768,             # Embedding dimension
+    'n_heads': 12,              # Number of attention heads
+    'n_layers': 12,             # Number of layers
+    'drop_rate': 0.1,           # Dropout rate
+    'qkv_bias': False,          # Query-Key-Value bias
+}
+
+class DummyGPTModel(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        # Recall that nn.Embedding layer is just a look up table for discrete indes
+        self.tok_emb = nn.Embedding(cfg['vocab_size'], cfg['emb_dim'])
+        
+        # one position per one token in the context
+        self.pos_emb = nn.Embedding(cfg['context_length'], cfg['emb_dim'])
+        self.drop_emb = nn.Dropout(cfg['drop_rate'])
+        # Uses a placeholder for TransformerBlock
+        self.trf_blocks = nn.Sequential(
+            *[DummyTransformerBlock(cfg) for _ in range(cfg['n_layers'])]
+        )
+        # Use a placeholder for LayerNorm
+        self.final_norm = DummyLayerNorm(cfg['emb_dim'])
+        self.out_head = nn.Linear(
+            cfg['emb_dim'], cfg['vocab_size'], bias=False
+        )
+
+    def forward(self, in_idx):
+        # batch size and context length
+        batch_size, seq_len = in_idx.shape
+        tok_embeds = self.tok_emb(in_idx) # get token from the look up table
+        pos_embeds = self.pos_emb(
+            torch.arange(seq_len, device=in_idx.device)
+        )
+        x = tok_embeds + pos_embeds
+        x = self.drop_emb(x)
+        x = self.trf_blocks(x)
+        x = self.final_norm(x)
+        logits = self.out_head(x)
+        return logits
+    
+# A placeholder that will be replaced by a real Transformer block
+class DummyTransformerBlock(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+
+    # A dummy forward function
+    def forward(self, x):
+        return x
+
+# A placeholder that will be replaced by a real LayerNorm
+class DummyLayerNorm(nn.Module):
+    # normalized_shape: embedding_dim
+    def __init__(self, normalized_shape, eps=1e-5):
+        super().__init__()
+
+    def forward(self, x):
+        return x
+```
+
+* Caller implementation
+
+```
+tokenizer = tiktoken.get_encoding('gpt2')
+batch = []
+
+txt1 = 'Every effort moves you'
+txt2 = 'Every day holds a'
+
+batch.append(torch.tensor(tokenizer.encode(txt1)))
+batch.append(torch.tensor(tokenizer.encode(txt2)))
+batch = torch.stack(batch, dim=0)
+
+print(batch.shape)
+print(batch)
+
+'''
+torch.Size([2, 4])
+tensor([[6109, 3626, 6100,  345],
+        [6109, 1110, 6622,  257]])
+'''
+
+# Initialise a new 124M-param DummyGPTModel instance and feed the tokenised batch
+torch.manual_seed(123)
+model = DummyGPTModel(GPT_CONFIG_124M)
+logits = model(batch)
+print(logits.shape)
+print(logits)
+```
+
+* The output:
+
+```
+torch.Size([2, 4, 50257])
+tensor([[[-1.2034,  0.3201, -0.7130,  ..., -1.5548, -0.2390, -0.4667],
+         [-0.1192,  0.4539, -0.4432,  ...,  0.2392,  1.3469,  1.2430],
+         [ 0.5307,  1.6720, -0.4695,  ...,  1.1966,  0.0111,  0.5835],
+         [ 0.0139,  1.6754, -0.3388,  ...,  1.1586, -0.0435, -1.0400]],
+
+        [[-1.0908,  0.1798, -0.9484,  ..., -1.6047,  0.2439, -0.4530],
+         [-0.7860,  0.5581, -0.0610,  ...,  0.4835, -0.0077,  1.6621],
+         [ 0.3567,  1.2698, -0.6398,  ..., -0.0162, -0.1296,  0.3717],
+         [-0.2407, -0.7349, -0.5102,  ...,  2.0057, -0.3694,  0.1814]]],
+       grad_fn=<UnsafeViewBackward0>)
+```
+* `torch.Size([2, 4, 50257])`: the output tensor has 2 rows corresponding to 2 text sample, each sample consits of 4 tokens (context length). Each token has 50257-dim vector, which corresponding to the size of vocabulary.
+* The post processing task will convert these 50257-dim vector into token IDs, which can be decoded into words.
+
+
+<img width="632" alt="image" src="https://github.com/user-attachments/assets/81bbdd5a-6b56-44c2-8bd9-4bca1ffde0f7" />
 
 ## 4.2 Normalizing activations with layer normalization
 
+* *later normalization* is used to imporove the stability and efficiency of nn training.
+* **The key idea:** to adjust the activations (outputs) of an nn layer to have a mean of 0 and variance of 1 (known as unit variance).
+* This adjustment speeds up the convergence to effective weights and ensure consistent, reliable training.
+* In GPT2 and modern transformer architectures, layer normalization is typically applied before and after the multi-head attention module.
+
+<img width="619" alt="image" src="https://github.com/user-attachments/assets/d37c57a0-6e6d-4292-a62f-c4a0cfe934c6" />
+
+* Below is to recreate the example above, in which we have a NN layer with 5 inputs and 6 outputs.
+
+```
+import torch
+import torch.nn as nn
+import tiktoken
+
+torch.manual_seed(123)
+
+# Create 2 training samples with 5 dimensions/features each
+batch_example = torch.randn(2, 5)
+print(f'batch_example:\n{batch_example}')
+
+layer = nn.Sequential(nn.Linear(5, 6), nn.ReLU())
+out = layer(batch_example)
+print(f'output:\n{out}')
+```
+
+```
+batch_example:
+tensor([[-0.1115,  0.1204, -0.3696, -0.2404, -1.1969],
+        [ 0.2093, -0.9724, -0.7550,  0.3239, -0.1085]])
+output:
+tensor([[0.2260, 0.3470, 0.0000, 0.2216, 0.0000, 0.0000],
+        [0.2133, 0.2394, 0.0000, 0.5198, 0.3297, 0.0000]],
+       grad_fn=<ReluBackward0>)
+```
+
+* Compute the mean and variance of the output tensor
+
+# Compute its means and variance
+
+```
+mean = out.mean(dim=-1, keepdim=True)
+var = out.var(dim=-1, keepdim=True)
+
+print(f'mean: {mean}')
+print(f'var: {var}')
+```
+
+* The output's mean and variance:
+```
+mean: tensor([[0.1324],
+        [0.2170]], grad_fn=<MeanBackward1>)
+var: tensor([[0.0231],
+        [0.0398]], grad_fn=<VarBackward0>)
+```
+
+* Apply layer norm to the outputs: (output - mean)/sqrt(var).
+
+```
+out_norm = (out - mean) / torch.sqrt(var)
+print(f'out_norm:\n{out_norm}')
+```
+
+* The output is:
+
+```
+out_norm:
+tensor([[ 0.6159,  1.4126, -0.8719,  0.5872, -0.8719, -0.8719],
+        [-0.0189,  0.1121, -1.0876,  1.5173,  0.5647, -1.0876]],
+       grad_fn=<DivBackward0>)
+```
+
+* Recompute mean and variance again
+
+```
+# Recompute mean and variance again
+mean = out_norm.mean(dim=-1, keepdim=True)
+var = out_norm.var(dim=-1, keepdim=True)
+
+print(f'mean: {mean}')
+print(f'var: {var}')
+```
+
+* Output which we expect it to have mean = 0, and variance = 1 (which is very close)
+
+```
+mean: tensor([[-5.9605e-08],
+        [ 1.9868e-08]], grad_fn=<MeanBackward1>)
+var: tensor([[1.0000],
+        [1.0000]], grad_fn=<VarBackward0>)
+```
+
+* We can turn off the scientific notation to improve readability.
+
+```
+torch.set_printoptions(sci_mode=False)
+print(f'mean: {mean}')
+print(f'var: {var}')
+
+'''
+mean: tensor([[    -0.0000],
+        [     0.0000]], grad_fn=<MeanBackward1>)
+var: tensor([[1.0000],
+        [1.0000]], grad_fn=<VarBackward0>)
+'''
+```
+
+* Implement a layer normalization class
+
+* Code: [code/section-4.2-layer-normalization-class.py](code/section-4.2-layer-normalization-class.py)
+```
+import torch
+import torch.nn as nn
+
+class LayerNorm(nn.Module):
+    def __init__(self, emb_dim):
+        super().__init__()
+        self.eps = 1e-5
+        self.scale = nn.Parameter(torch.ones(emb_dim))
+        self.shift = nn.Parameter(torch.ones(emb_dim))
+
+    def forward(self, x):
+        mean = x.mean(dim=-1, keepdim=True)
+        # In the variance calculation, we devide by n instead of n-1.
+        var = x.var(dim=-1, keepdim=True, unbiased=False)
+        norm_x = (x - mean)/torch.sqrt(var + self.eps)
+        return self.scale * norm_x + self.shift
+```
+* The layer normalization class operates on the last dim of the input tensor x, which represents the embedding dimension.
+* The scale and shift are trainable parameters. It allows the model to learn appropriate scaling and shifting that best suite the data it is processing.
+
+* Test the LayerNorm class with the example.
+
+```
+torch.manual_seed(123)
+
+# Create 2 training samples with 5 dimensions/features each
+batch_example = torch.randn(2, 5)
+print(f'batch_example:\n{batch_example}')
+
+ln = LayerNorm(emb_dim=5)
+out_ln = ln(batch_example)
+# Compute mean and variance
+mean = out_ln.mean(dim=-1, keepdim=True)
+var = out_ln.var(dim=-1, unbiased=False, keepdim=True)
+
+print(f'mean: {mean}')
+print(f'var: {var}')
+```
+
+* Output:
+
+```
+mean: tensor([[1.0000],
+        [1.0000]], grad_fn=<MeanBackward1>)
+var: tensor([[1.0000],
+        [1.0000]], grad_fn=<VarBackward0>)
+```
+
+**Layer normalization vs batch normalization**
+
+> Batch normalization normalizes across the batch dimension, while layer normalization normalizes across the feature dimension.\
+> Batch size depends on computational resources.\
+> Layer normalization normalizes each input independently of the batch size, it offers more flexibility and stability in these scenarios.
+
 ## 4.3 Implementing a feed forward network with GELU activations
+
+* ReLU has been commonly used in DL due to its simplicity and effectiveness.
+* In LLMs, several activation functions are employed. The two notable examples are
+    * GELU (Gaussian error linear unit)
+    * SwiGLU (Swish-gated linear unit)
+* They improve performance of DL models.
+
+### GELU
+
+* GELU is defined as
+
+```
+GELU(x) = x⋅Φ(x)
+
+where Φ(x) is the cumulative distribution func- tion of the standard Gaussian distribution.
+```
+
+* In practice, it's common to implement a computationally cheaper approximation:
+
+<img width="512" alt="image" src="https://github.com/user-attachments/assets/6850a46c-2198-4272-9158-50bc0f6938f6" />
+
+* Code: [code/section-4.3-GELU-activation-function.py](code/section-4.3-GELU-activation-function.py)
+
+```
+import torch
+import torch.nn as nn
+
+class GELU(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return 0.5 * x * (
+            1 + torch.tanh(torch.sqrt(torch.tensor(2.0/torch.pi)) *
+            (x + 0.044715 * torch.pow(x,3))) 
+        )
+
+gelu, relu = GELU(), nn.ReLU()
+```
+
+* Plot the results comparing GELU and ReLU
+
+```
+import matplotlib.pyplot as plt
+
+# Create 100 sample data points in the range -3 to 3
+x = torch.linspace(-3,3,100)
+y_gelu, y_relu = gelu(x), relu(x)
+
+plt.figure(figsize=(8,3))
+for i, (y, label) in enumerate(zip([y_gelu, y_relu], ['GELU', 'RELU']), 1):
+    plt.subplot(1,2,i)
+    plt.plot(x, y)
+    plt.title(f'{label} activation function')
+    plt.xlabel('x')
+    plt.ylabel(f'{label}(x)')
+    plt.grid(True)
+plt.tight_layout()
+plt.show()
+```
+
+<img width="788" alt="image" src="https://github.com/user-attachments/assets/57e1ce11-1f6e-443f-abc7-26274868eec2" />
+
+* GELU is a smooth, non-linear function that approximates ReLU but with a non zero gradeint for almost all negative values (except at approximately x = -0.75)
+* ReLU is a piecewise linear function.
+* The smoothness of GELU allows for more nuanced adjustment to the model's parameters.
+* Unlike ReLU which output zero for any negative input, GELU allows for a small, non-zero output for negative values.
+* This characteristic allows neurons that receive negative input to continue contributing to the learning process, although to a less extent than positive inputs.
+
+### Feed Forward Neural Network Module
+
+* Code: [code/sectino-4.3-FeedForward.py](code/sectino-4.3-FeedForward.py)
+```
+class FeedForward(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(cfg['emb_dim'], 4 * cfg['emb_dim']), # 768 x 3072
+            GELU(),
+            nn.Linear(4 * cfg['emb_dim'], cfg['emb_dim']), # 3072 x 768
+        )
+    
+    def forward(self, x):
+        return self.layer(x)
+```
+
+```
+ffn = FeedForward(GPT_CONFIG_124M)
+# Create a sample input of batch size = 2, 3 tokens, token embedding size = 768
+x = torch.rand(2, 3, 768)
+out = ffn(x)
+print(out.shape) # torch.Size([2, 3, 768])
+```
+
+<img width="487" alt="image" src="https://github.com/user-attachments/assets/f48a4c08-dcee-48d7-b311-7e9f3b897df1" />
+
+> Although the input and output dimensions of this module are the same, it internally expands the embedding dimension into a higher-dimensional space through the first linear layer. This expansion is followed by a nonlinear GELU activation and then a contraction back to the original dimension with the second linear transformation.\
+> **Such a design allows for the exploration of a richer representation space.**
+
+<img width="621" alt="image" src="https://github.com/user-attachments/assets/0b1987fd-f1e5-4fb5-8f50-ba7077138782" />
 
 ## 4.4 Adding shortcut connections
 
