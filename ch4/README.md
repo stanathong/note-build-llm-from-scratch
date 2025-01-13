@@ -440,6 +440,132 @@ print(out.shape) # torch.Size([2, 3, 768])
 
 ## 4.4 Adding shortcut connections
 
+### Concepts behind shortcut connections, also known as skip or residual connections
+
+* Shortcut connections are used in deep networks to mitigate the challenge of vanishing gradients.
+* This is the problem where gradients (guide weight updates during training) become progressively smaller as they propate backward through the layers - making it difficult to train the earlier layers.
+
+<img width="748" alt="image" src="https://github.com/user-attachments/assets/17970d8c-6949-421f-a323-e95cc7b4ec88" />
+
+* The shortcut connections skip one or more layers, and add the output of one layer to the output of a later layer.
+* This is crucial in preserving the flow of gradients during the backward pass in the training.
+
+**Hands-on**
+* Code: [code/section-4.4-ExampleDeepNeuralNetwork.py](code/section-4.4-ExampleDeepNeuralNetwork.py)
+
+```
+import torch
+import torch.nn as nn
+
+class ExampleDeepNeuralNetwork(nn.Module):
+    def __init__(self, layer_sizes, use_shortcut):
+        super().__init__()
+        self.use_shortcut = use_shortcut
+        # Implement 5 layers
+        self.layers = nn.ModuleList([
+            nn.Sequential(nn.Linear(layer_sizes[0], layer_sizes[1]), 
+                          GELU()),
+            nn.Sequential(nn.Linear(layer_sizes[1], layer_sizes[2]), 
+                          GELU()),
+            nn.Sequential(nn.Linear(layer_sizes[2], layer_sizes[3]), 
+                          GELU()),
+            nn.Sequential(nn.Linear(layer_sizes[3], layer_sizes[4]), 
+                          GELU()),
+            nn.Sequential(nn.Linear(layer_sizes[4], layer_sizes[5]), 
+                          GELU()),                                                    
+        ])
+    
+    def forward(self, x):
+        for i, layer in enumerate(self.layers):
+            # Compute output of the current layer
+            layer_output = layer(x)
+            print(f'layer#{i} : x = {x.shape}, output = {layer_output.shape}')
+            # Check if shortcut can be applied
+            if self.use_shortcut and x.shape == layer_output.shape:
+                x = x + layer_output
+            else:
+                x = layer_output
+        return x
+    '''
+    layer#0 : x = torch.Size([1, 3]), output = torch.Size([1, 3])
+    layer#1 : x = torch.Size([1, 3]), output = torch.Size([1, 3])
+    layer#2 : x = torch.Size([1, 3]), output = torch.Size([1, 3])
+    layer#3 : x = torch.Size([1, 3]), output = torch.Size([1, 3])
+    layer#4 : x = torch.Size([1, 3]), output = torch.Size([1, 1])
+    '''
+    
+class GELU(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return 0.5 * x * (
+            1 + torch.tanh(torch.sqrt(torch.tensor(2.0/torch.pi)) *
+            (x + 0.044715 * torch.pow(x,3))) 
+        )
+
+# Utility function to compute gradients in the model's backward pass
+def print_gradients(model, x):
+    output = model(x)
+    target = torch.tensor([[0.]])
+    # calculate loss based on how close the target and the output
+    loss = nn.MSELoss()
+    loss = loss(output, target)
+    # calculate gradients
+    loss.backward()
+
+    for name, param in model.named_parameters():
+        if 'weight' in name:
+            print(f'{name} has gradient mean of {param.grad.abs().mean().item()}')
+```
+
+* **Without shortcut connections**
+```
+layer_sizes = [3, 3, 3, 3, 3, 1]
+sample_input = torch.tensor([[1., 0, -1.]])
+
+# Without shortcut connections
+torch.manual_seed(123)
+model_without_shortcut = ExampleDeepNeuralNetwork(layer_sizes, use_shortcut=False)
+print_gradients(model_without_shortcut, sample_input)
+```
+* **Output when not using shortcust connections**
+    * Gradient becomes smaller as we progress from the last layer (4) to the first layer (0)
+
+```
+layers.0.0.weight has gradient mean of 0.00020173587836325169
+layers.1.0.weight has gradient mean of 0.00012011159560643137
+layers.2.0.weight has gradient mean of 0.0007152039906941354
+layers.3.0.weight has gradient mean of 0.0013988736318424344
+layers.4.0.weight has gradient mean of 0.005049645435065031
+```
+
+* **With shortcut connections**
+```
+layer_sizes = [3, 3, 3, 3, 3, 1]
+sample_input = torch.tensor([[1., 0, -1.]])
+
+# With shortcut connections
+torch.manual_seed(123)
+model_without_shortcut = ExampleDeepNeuralNetwork(layer_sizes, use_shortcut=True)
+print_gradients(model_without_shortcut, sample_input)
+```
+* **Output with shortcut connections**
+    * Gradient value stabilizes as we progress toward the first layer (layers.0) and doesn't shrink to a vanishingly small value.
+
+```
+layers.0.0.weight has gradient mean of 0.22169792652130127
+layers.1.0.weight has gradient mean of 0.20694106817245483
+layers.2.0.weight has gradient mean of 0.32896995544433594
+layers.3.0.weight has gradient mean of 0.2665732204914093
+layers.4.0.weight has gradient mean of 1.3258540630340576
+```
+
+> **Note:**
+> nn.ModuleList does not have a forward method, but nn.Sequential does.\
+> We can wrap several modules in nn.Sequential and run it on the input.\
+> nn.ModuleList is just a Python list that stores a list nn.Modules and it does not have a forward() method. It can not be called like a normal module.
+
 ## 4.5 Connecting attention and linear layers in a transformer block
 
 ## 4.6 Coding the GPT model
