@@ -568,6 +568,83 @@ layers.4.0.weight has gradient mean of 1.3258540630340576
 
 ## 4.5 Connecting attention and linear layers in a transformer block
 
+* In this section, we're implementing the transformer block.
+* Note that this block is repeated 12 times in the GPT2-architecture.
+
+<img width="712" alt="image" src="https://github.com/user-attachments/assets/d153828e-efef-4584-aa57-5c086110610a" />
+
+* Above is the transformer block.
+* It takes input tokens which have been embedded into 768 dimensional vector.
+* Each row reprsents one token's vector representation.
+* The output of transformer block are vectors of the same dimension as the input.
+
+* **Hands-On**
+
+* Code: [code/transformer_block.py](code/transformer_block.py)
+
+```
+import torch.nn as nn
+
+from multi_head_attention import MultiHeadAttention
+from components_block import FeedForward, LayerNorm
+
+class TransformerBlock(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.att = MultiHeadAttention(
+            d_in=cfg["emb_dim"],
+            d_out=cfg["emb_dim"],
+            context_length=cfg["context_length"],
+            num_heads=cfg["n_heads"],
+            dropout=cfg["drop_rate"],
+            qkv_bias=cfg["qkv_bias"]
+        )
+        self.ff = FeedForward(cfg)
+        self.norm1 = LayerNorm(cfg["emb_dim"])
+        self.norm2 = LayerNorm(cfg["emb_dim"])
+        self.drop_shortcut = nn.Dropout(cfg["drop_rate"])
+
+    def forward(self, x):
+        shortcut = x
+        x = self.norm1(x)
+        x = self.att(x)
+        x = self.drop_shortcut(x)
+        x = x + shortcut
+
+        shortcut = x
+        x = self.norm2(x)
+        x = self.ff(x)
+        x = self.drop_shortcut(x)
+        x = x + shortcut
+        return x
+```
+
+* Code: [code/section-4.5-transformer-block.py](code/section-4.5-transformer-block.py)
+
+```
+import torch
+import torch.nn as nn
+
+from transformer_block import TransformerBlock
+from config import GPT_CONFIG_124M
+
+torch.manual_seed(123)
+
+# Create sample input of shape: [batch_size, num_tokens, emb_dim]
+x = torch.rand(2, 4, 768)
+block = TransformerBlock(GPT_CONFIG_124M)
+output = block(x)
+
+print("Input shape:", x.shape) # torch.Size([2, 4, 768])
+print("Output shape:", output.shape) # torch.Size([2, 4, 768])
+```
+
+* The transformer block maintains the input dimensions in its output, indicating that the transformer architecture processes sequences of data without altering their shape throughout the network.
+* Based on this design, each output vector directly corresponds to an input vector, maintaining a one-to-one relationship.
+* The output (context vector) encapsulates information from the entire input sequence.
+* This means that while the physical dimensions of the sequence (length and feature size) remain unchanged as it passes through the transformer block, **the content of each output vector is reencoded to integrate contextual information from across the entire input sequence**.
+
+
 ## 4.6 Coding the GPT model
 
 ## 4.7 Generating text
