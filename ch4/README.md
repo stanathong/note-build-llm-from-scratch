@@ -832,14 +832,160 @@ print(f"Total size of the model: {total_size_bytes:,} B or {total_size_mb:.2f} M
 > Calculate and compare the number of parameters that are contained in the feed forward module
 > and those that are contained in the multi-head attention module.
 
+* Code: [code/exercise-4.1.py](code/exercise-4.1.py)
+```
+from transformer_block import TransformerBlock
+
+GPT_CONFIG_124M = {
+    'vocab_size': 50257,        # Vocabulary size
+    'context_length': 1024,     # Context length
+    'emb_dim': 768,             # Embedding dimension
+    'n_heads': 12,              # Number of attention heads
+    'n_layers': 12,             # Number of layers
+    'drop_rate': 0.1,           # Dropout rate
+    'qkv_bias': False,          # Query-Key-Value bias
+}
+
+block = TransformerBlock(GPT_CONFIG_124M)
+
+total_params = sum(p.numel() for p in block.ff.parameters())
+print(f"The total number of parameters in feed forward module is {total_params:,}")
+# The total number of parameters in feed forward module is 4,722,432
+
+total_params = sum(p.numel() for p in block.att.parameters())
+print(f"The total number of parameters in attention module is {total_params:,}")
+# The total number of parameters in attention module is 2,360,064
+```
+
+* The outputs are:
+```
+The total number of parameters in feed forward module is 4,722,432
+The total number of parameters in attention module is 2,360,064
+```
+* Note that this is the result per a single transformer block.
+* Our GPT model consists of 12 transformer blocks.
+
 ## Excercise 4.2 Initializing larger GPT models
-> We initialized a 124-million-parameter GPT model (GPT-2 small).
+> We initialized a 124-million-parameter GPT model (GPT-2 small).\
 > Without making any code modifications besides updating the configuration file,
-> use the GPTModel class to implement
-> GPT-2 medium (using 1,024-dimensional embeddings, 24 transformer blocks, 16 multi-head attention heads),
-> GPT-2 large (1,280-dimensional embeddings, 36 transformer blocks, 20 multi-head attention heads),
-> and GPT-2 XL (1,600-dimensional embeddings, 48 transformer blocks, 25 multi-head attention heads).
+> use the GPTModel class to implement\
+> GPT-2 medium (using 1,024-dimensional embeddings, 24 transformer blocks, 16 multi-head attention heads),\
+> GPT-2 large (1,280-dimensional embeddings, 36 transformer blocks, 20 multi-head attention heads),\
+> and GPT-2 XL (1,600-dimensional embeddings, 48 transformer blocks, 25 multi-head attention heads).\
 > As a bonus, calculate the total number of parameters in each GPT model.
+
+- **GPT2-small** (the 124M configuration we already implemented):
+    - "emb_dim" = 768
+    - "n_layers" = 12
+    - "n_heads" = 12
+
+- **GPT2-medium:**
+    - "emb_dim" = 1024
+    - "n_layers" = 24
+    - "n_heads" = 16
+
+- **GPT2-large:**
+    - "emb_dim" = 1280
+    - "n_layers" = 36
+    - "n_heads" = 20
+
+- **GPT2-XL:**
+    - "emb_dim" = 1600
+    - "n_layers" = 48
+    - "n_heads" = 25
+
+* Code: [code/exercise-4.2.py](code/exercise-4.2.py)
+```
+from gpt_model import GPTModel
+
+GPT_CONFIG_124M = {
+    'vocab_size': 50257,        # Vocabulary size
+    'context_length': 1024,     # Context length
+    'emb_dim': 768,             # Embedding dimension
+    'n_heads': 12,              # Number of attention heads
+    'n_layers': 12,             # Number of layers
+    'drop_rate': 0.1,           # Dropout rate
+    'qkv_bias': False,          # Query-Key-Value bias
+}
+
+def get_config(base_config, model_name='gpt2-small'):
+    GPT_CONFIG = base_config.copy()
+
+    if model_name == 'gpt2-small':
+        GPT_CONFIG['emb_dim'] = 768
+        GPT_CONFIG['n_layers'] = 12
+        GPT_CONFIG['n_heads'] = 12
+
+    elif model_name == 'gpt2-medium':
+        GPT_CONFIG['emb_dim'] = 1024
+        GPT_CONFIG['n_layers'] = 24
+        GPT_CONFIG['n_heads'] = 16
+
+    elif model_name == 'gpt2-large':
+        GPT_CONFIG['emb_dim'] = 1280
+        GPT_CONFIG['n_layers'] = 36
+        GPT_CONFIG['n_heads'] = 20
+
+    elif model_name == 'gpt2-xl':
+        GPT_CONFIG['emb_dim'] = 1600
+        GPT_CONFIG['n_layers'] = 48
+        GPT_CONFIG['n_heads'] = 25
+
+    else:
+        raise ValueError(f'Incorrect model name {model_name}')
+    
+    return GPT_CONFIG
+
+def calculate_size(model):
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"The total number of parameters: {total_params:,}")
+
+    total_params_gpt2 =  total_params - sum(p.numel() for p in model.out_head.parameters())
+    print(f"Number of trainable parameters considering weight tying: {total_params_gpt2:,}")
+
+    # Calculate the total size in bytes (assuming float32, 4 bytes per parameter)
+    total_size_bytes = total_params * 4
+    
+    # Convert to megabytes
+    total_size_mb = total_size_bytes / (1024 * 1024)
+    
+    print(f"Total size of the model: {total_size_mb:.2f} MB")
+
+if __name__ == '__main__':
+    for model_abbrev in ("small", "medium", "large", "xl"):
+        model_name = f"gpt2-{model_abbrev}"
+        CONFIG = get_config(GPT_CONFIG_124M, model_name=model_name)
+        model = GPTModel(CONFIG)
+        print(f"\n\n{model_name}:")
+        calculate_size(model)
+```
+
+* Output:
+
+```
+gpt2-small:
+The total number of parameters: 163,009,536
+Number of trainable parameters considering weight tying: 124,412,160
+Total size of the model: 621.83 MB
+
+
+gpt2-medium:
+The total number of parameters: 406,212,608
+Number of trainable parameters considering weight tying: 354,749,440
+Total size of the model: 1549.58 MB
+
+
+gpt2-large:
+The total number of parameters: 838,220,800
+Number of trainable parameters considering weight tying: 773,891,840
+Total size of the model: 3197.56 MB
+
+
+gpt2-xl:
+The total number of parameters: 1,637,792,000
+Number of trainable parameters considering weight tying: 1,557,380,800
+Total size of the model: 6247.68 MB
+```
 
 ## 4.7 Generating text
 
