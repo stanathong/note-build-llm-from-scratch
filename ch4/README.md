@@ -642,10 +642,204 @@ print("Output shape:", output.shape) # torch.Size([2, 4, 768])
 * The transformer block maintains the input dimensions in its output, indicating that the transformer architecture processes sequences of data without altering their shape throughout the network.
 * Based on this design, each output vector directly corresponds to an input vector, maintaining a one-to-one relationship.
 * The output (context vector) encapsulates information from the entire input sequence.
-* This means that while the physical dimensions of the sequence (length and feature size) remain unchanged as it passes through the transformer block, **the content of each output vector is reencoded to integrate contextual information from across the entire input sequence**.
-
+* This means that while the physical dimensions of the sequence (length and feature size) remain unchanged as it passes through the transformer block, **the content of each output vector is re-encoded to integrate contextual information from across the entire input sequence**.
 
 ## 4.6 Coding the GPT model
+
+**An overview of the GPT model architecture showing the flow of data through the GPT model**
+* Startint from the bottom to the top:
+    * Input text -> tokenized text
+    * tokenized text -> token embedding
+    * token embedding -> augmented with positional embeddings
+    * the tensor -> transformer blocks 
+<img width="735" alt="image" src="https://github.com/user-attachments/assets/ab0646e3-c31b-4a9b-9fc1-d69e5c2dffb3" />
+
+* In the case of the 124-million-parameter GPT-2 models, the transformer block is repeated 12 times, as specified in the `n_layers` entry in the `GPT_CONFIG_124M` dictionary.
+* In the 1,542-million-parameter GPT-2 model, the transformer block is repeated 48 times.
+* The output from the final transformer block then goes through `Final LayerNorm` and later the `Linear output layer`.
+* The last linear output layer maps each token vector into a 50257 dimentional embedding, which is equal to the model's vocabulary size, to predict the next token in the sequence.
+
+* **Hands-on**
+
+* Code: [code/gpt_model.py](code/gpt_model.py)
+```
+import torch
+import torch.nn as nn
+from transformer_block import TransformerBlock
+from components_block import LayerNorm
+
+class GPTModel(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.tok_emb = nn.Embedding(cfg["vocab_size"], cfg["emb_dim"])
+        self.pos_emb = nn.Embedding(cfg["context_length"], cfg["emb_dim"])
+        self.drop_emb = nn.Dropout(cfg["drop_rate"])
+        self.trf_blocks = nn.Sequential(
+            *[TransformerBlock(cfg) for _ in range(cfg["n_layers"])]
+        )
+        self.final_norm = LayerNorm(cfg["emb_dim"])
+        self.out_head = nn.Linear(
+            cfg["emb_dim"], cfg["vocab_size"], bias=False
+        )
+
+    def forward(self, in_idx):
+        batch_size, seq_len = in_idx.shape
+        tok_embeds = self.tok_emb(in_idx)
+        pos_embeds = self.pos_emb(
+            torch.arange(seq_len, device=in_idx.device)
+        )
+        x = tok_embeds + pos_embeds
+        x = self.drop_emb(x)
+        x = self.trf_blocks(x) # same shape as input
+        x = self.final_norm(x)
+        logits = self.out_head(x)
+        return logits
+```
+
+* The `__init__` constructor initialises the token and positional embedding layers using the configuration named cfg below:
+
+```
+GPT_CONFIG_124M = {
+    'vocab_size': 50257,        # Vocabulary size
+    'context_length': 1024,     # Context length
+    'emb_dim': 768,             # Embedding dimension
+    'n_heads': 12,              # Number of attention heads
+    'n_layers': 12,             # Number of layers
+    'drop_rate': 0.1,           # Dropout rate
+    'qkv_bias': False,          # Query-Key-Value bias
+}
+```
+
+* These embedding layers converts input token indices into dense vectors and adding positional information.
+`x = tok_embeds + pos_embeds`.
+* The `__init__` method creates a sequential stack of `cfg["n_layers"]` TransformerBlock models.
+* Following the transformer blocks, a LayerNorm layer is applied.
+* This LayerNorm is used to standardizing the outputs from the transformer blocks to stabilize the learning process.
+* Finally a linear output head is used to proejcts the transformer's output into the vocabulary space of the tokenizer to generate logits for each token in the vocabulary.
+
+* **Testing the 124-million-parameter GPT model**
+* We start by initialise the 124-million-parameter GPT model using the GPT_CONFIG_124M dictionary.
+* We then feed to the model the batch text input.
+
+* Code: [code/section-4.6-gpt-model.py](code/section-4.6-gpt-model.py)
+```
+import torch
+import torch.nn as nn
+from gpt_model import GPTModel 
+
+torch.manual_seed(123)
+
+# Input is tokenised text
+batch = torch.tensor([
+        [6109, 3626, 6100,  345],
+        [6109, 1110, 6622,  257]])
+
+model = GPTModel(GPT_CONFIG_124M)
+out = model(batch)
+
+print('Input batch:', batch.shape, '\n')
+print('Input batch:\n', batch)
+
+print('\nOutput shape:', out.shape)
+print(out)
+```
+
+* The tokenized input is
+
+```
+Input batch: torch.Size([2, 4]) 
+
+Input batch:
+ tensor([[6109, 3626, 6100,  345], # Token IDs of text 1
+        [6109, 1110, 6622,  257]]) # Token IDs of text 2
+```
+
+* The output obtained from the GPTModel is
+
+```
+Output shape: torch.Size([2, 4, 50257])
+tensor([[[ 0.4398, -1.1968, -0.3533,  ..., -0.1638, -1.2250,  0.0803],
+         [ 0.1247, -2.2218, -0.6962,  ..., -0.5499, -1.4728,  0.0665],
+         [ 0.5515, -1.5762, -0.3643,  ...,  0.0276, -1.7843, -0.2937],
+         [-0.8036, -1.6966, -0.2890,  ...,  0.3314, -1.2682,  0.1784]],
+
+        [[-0.3290, -1.8522, -0.1652,  ..., -0.1751, -1.0380, -0.2999],
+         [-0.0083, -1.2779, -0.1241,  ...,  0.3117, -1.4347,  0.2552],
+         [ 0.5651, -1.1005, -0.1858,  ...,  0.1592, -1.2875,  0.2329],
+         [-0.5593, -1.3399,  0.3970,  ...,  0.8095, -1.6276,  0.3201]]],
+       grad_fn=<UnsafeViewBackward0>)
+```
+
+* The output tensor has the shape `[2, 4, 50257]`, since we passed in two input texts (batch = 2) with four tokens each.
+* The last dimension (50,257) corresponds to the vocabulary size of the tokenizer.
+
+* **Computing the number of parameters**
+```
+total_params = sum(p.numel() for p in model.parameters())
+print(f"Total number of parameters: {total_params:,}")
+
+# Total number of parameters: 163,009,536
+```
+
+* **Explanation why the actual number of parameters is 163M instead of 124M**
+
+> This involes a concept called **weight tying**, which was used in the original GPT-2 architecture.
+> The original GPT-2 architecture **reuses the weights from the token embedding layer in its output layer**.
+> To understand better, have a look at the shapes of the **token embedding layer and linear output layer**:
+
+```
+print("Token embedding layer shape:", model.tok_emb.weight.shape)
+print("Output layer shape:", model.out_head.weight.shape)
+```
+* The weight tensors for both of these layers have the same shape which is `[50257, 768]`.
+
+```
+Token embedding layer shape: torch.Size([50257, 768])
+Output layer shape: torch.Size([50257, 768])
+```
+* The token embedding and output layers are very large due to the number of rows for the 50,257 in the tokenizer’s vocabulary.
+* If we remove the output layer parameter count from the total GPT-2 model count according to the weight tying:
+
+```
+total_params_gpt2 = (
+    total_params - sum(p.numel()
+    for p in model.out_head.parameters())
+)
+print(f"Number of trainable parameters "
+      f"considering weight tying: {total_params_gpt2:,}")
+```
+
+```
+Number of trainable parameters considering weight tying: 124,412,160
+```
+
+* The memory required for the 163-million parameters can be computed as:
+    * Calculate the total size in bytes, assuming float32 (4 bytes per parameters)
+    * Convert to megabytes by dividing with 10^6
+```
+total_size_bytes = total_params * 4 # assuming float32 i.e. 4 bytes
+total_size_mb = total_size_bytes / (1024*1024) # convert to MB
+
+print(f"Total size of the model: {total_size_bytes:,} B or {total_size_mb:.2f} MB")
+# Total size of the model: 652,038,144 B or 621.83 MB
+```
+
+* **Note:**
+    * Weight tying reduces the memory footprint and computation of the model.
+    * The author, however, suggest using separate token embedding and output layers as it results in better training and model performance.
+
+## Exercise 4.1 Number of parameters in feed forward and attention modules
+> Calculate and compare the number of parameters that are contained in the feed forward module
+> and those that are contained in the multi-head attention module.
+
+## Excercise 4.2 Initializing larger GPT models
+> We initialized a 124-million-parameter GPT model (GPT-2 small).
+> Without making any code modifications besides updating the configuration file,
+> use the GPTModel class to implement
+> GPT-2 medium (using 1,024-dimensional embeddings, 24 transformer blocks, 16 multi-head attention heads),
+> GPT-2 large (1,280-dimensional embeddings, 36 transformer blocks, 20 multi-head attention heads),
+> and GPT-2 XL (1,600-dimensional embeddings, 48 transformer blocks, 25 multi-head attention heads).
+> As a bonus, calculate the total number of parameters in each GPT model.
 
 ## 4.7 Generating text
 
