@@ -77,3 +77,4 @@ Number of trainable parameters considering weight tying: 124,412,160
 total_size_bytes = total_params * 4 # assuming float32 i.e. 4 bytes
 total_size_mb = total_size_bytes / (1024*1024) # convert to MB
 print(f"Total size of the model: {total_size_bytes:,} B or {total_size_mb:.2f} MB")
+# Total size of the model: 652,038,144 B or 621.83 MB
