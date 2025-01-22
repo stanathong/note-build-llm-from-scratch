@@ -9,7 +9,7 @@ This repo contains my study notes based exclusively from the book [Build A Large
 | **Chapter 1** Understanding large language models | [ch1/README.md](ch1/README.md) | **Completed** |
 | **Chapter 2** Working with text data | [ch2/README.md](ch2/README.md) | **Completed** |
 | **Chapter 3** Coding attention mechanisms | [ch3/README.md](ch3/README.md) | **Completed** |
-| **Chapter 4** Implementing a GPT model from scratch to generate text | [ch4/README.md](ch4/README.md) | **In progress** |
+| **Chapter 4** Implementing a GPT model from scratch to generate text | [ch4/README.md](ch4/README.md) | **Completed** |
 | **Chapter 5** Pretraining on unlabeled data | [ch5/README.md] | **Not started** |
 | **Chapter 6** Fine-tuning for classification | [ch6/README.md] | **Not started** |
 | **Chapter 7** Fine-tuning to follow instructions | [ch7/README.md] | **Not started** |
