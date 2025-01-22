@@ -989,4 +989,230 @@ Total size of the model: 6247.68 MB
 
 ## 4.7 Generating text
 
+* To recall, a GPT model generates generates text, one token at a time.
+* Starting with an initial context, the model predicts a subsequent token during each iteration, and appends it to the input for the next round of predictions.
+
+```
+               Input     [Output]
+Iteration 1:   Hello, I am [a] <-- the output token will append to the input text and becomes the input for the next iteration.
+Iteration 2:   Hello, I am a [model]
+Iteration 3:   Hello, I am a model [ready]
+```
+
+* Our current GPT model implementation outputs tensors with shape `[batch_size, num_token, vocab_size]`.
+* The next step is to generate text from these output tensors.
+
+<img width="688" alt="image" src="https://github.com/user-attachments/assets/5058fffe-26dd-4b6f-b992-e7fd80cbb00d" />
+
+* This process of generating the next token is repeated over many iterations, until we reach a user-specified number of generated tokens.
+* The following `generate_text_simple` function implements **greedy decoding**, which is a simple and fast method to generate text
+* In greedy decoding, at each step, **the model chooses the word (or token) with the highest probability as its next output** (the highest logit corresponds to the highest probability, so we technically wouldn't even have to compute the softmax function explicitly)
+
+* **Hands-on**
+
+* Code: [code/section-4.7-generate-text-sample.py](code/section-4.7-generate-text-sample.py)
+```
+import torch
+
+def generate_text_simple(model, idx, max_new_tokens, context_size):
+    '''
+    idx [batch, n_tokens]: array of indices in the current context
+    '''
+    # Loop for # max_new_tokens required to generate
+    for _ in range(max_new_tokens):
+        # Crop current context if it exceeds the supported context size
+        # keep the last tokens as context
+        idx_cond = idx[:, -context_size:] # [batch, context_size]
+
+        # Get the predictions
+        with torch.no_grad():
+            logits = model(idx_cond)
+
+        # Focus only on the last time step
+        # (batch, n_tokens, vocab_size) becomes (batch, vocab_size)
+        # -1 here indicates the last token 
+        logits = logits[:, -1, :] # [batch, vocab_size]
+
+        # Apply softmax to get probabilities
+        probas = torch.softmax(logits, dim=-1) # [batch, vocab_size]
+
+        # Get the idx of the vocab entry with the highest probability value
+        idx_next = torch.argmax(probas, dim=-1, keepdim=True) # (batch, 1)
+
+        # Append sampled index to the running sequence
+        idx = torch.cat((idx, idx_next), dim=-1) # (batch, n_tokens + 1)
+
+    return idx
+```
+* We obtain logits as predictions from the model.
+* We then use a softmax function to convert the logits into a probablity distribution, from which we identify the position with the highest value via torch.argmax.
+* The model generates the most likely next token, which is known as **greedy decoding**.
+
+* We first start by encode the input text into token IDs:
+
+```
+import torch
+import tiktoken
+
+tokenizer = tiktoken.get_encoding("gpt2")
+start_context = "Hello, I am"
+encoded = tokenizer.encode(start_context)
+print("encoded:", encoded)
+encoded_tensor = torch.tensor(encoded).unsqueeze(0) # Add batch dimension
+print("encoded_tensor.shape:", encoded_tensor.shape)
+```
+
+* The encoded IDs are:
+```
+encoded: [15496, 11, 314, 716]
+encoded_tensor.shape: torch.Size([1, 4])
+```
+
+* Next, we initialise the model and put it into the eval() mode to disable random components like dropout() which are only used during training.
+
+```
+from gpt_model import GPTModel 
+from config import GPT_CONFIG_124M
+
+# Put the model into .eval() mode
+# This disable random components like dropout, which are only used during training.
+model = GPTModel(GPT_CONFIG_124M)
+model.eval()
+
+out = generate_text_simple(
+    model=model,
+    idx=encoded_tensor,
+    max_new_tokens=6,
+    context_size=GPT_CONFIG_124M["context_length"]
+)
+print("Output:", out)
+print("Output length:", len(out[0]))
+
+# Convert the IDs back into text using the tokenizer
+decoded_text = tokenizer.decode(out.squeeze(0).tolist())
+print(decoded_text)
+```
+
+* The output we obtained are:
+
+```
+Output: tensor([[15496,    11,   314,   716,  1755, 31918,  8247,  1755, 37217,  4085]])
+Output length: 10
+Hello, I am night Rafaelzens night travellers emot
+```
+* The model generates gibberish because we haven't trained the model yet.
+* We just initialise the model with initial random weights.
+
+## Excercise 4.3 Using separate dropout parameters
+
+* **Code:** [code/excercise-4.3.py](ch4/code/excercise-4.3.py)
+
+### New config
+
+* Instead of using a single `dropout=cfg["drop_rate"]` setting in the GPT_CONFIG_124M dictionary, we change the code to specify separate dropout for different modules.
+
+* Originally, it is defined as:
+
+```
+GPT_CONFIG_124M = {
+    'vocab_size': 50257,        # Vocabulary size
+    'context_length': 1024,     # Context length
+    'emb_dim': 768,             # Embedding dimension
+    'n_heads': 12,              # Number of attention heads
+    'n_layers': 12,             # Number of layers
+    'drop_rate': 0.1,           # Dropout rate
+    'qkv_bias': False,          # Query-Key-Value bias
+}
+```
+
+* It is now currenly defined as:
+
+```
+GPT_CONFIG_124M = {
+    "vocab_size": 50257,
+    "context_length": 1024,
+    "emb_dim": 768,
+    "n_heads": 12,
+    "n_layers": 12,
+    "drop_rate_emb": 0.1,        # NEW: dropout for embedding layers
+    "drop_rate_attn": 0.1,       # NEW: dropout for multi-head attention  
+    "drop_rate_shortcut": 0.1,   # NEW: dropout for shortcut connections  
+    "qkv_bias": False
+}
+```
+
+* Use the drop-rate settings for multi-head attention for TransformerBlock:
+* There are used in two places.
+
+```
+class TransformerBlock(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.att = MultiHeadAttention(
+            d_in=cfg["emb_dim"],
+            d_out=cfg["emb_dim"],
+            context_length=cfg["context_length"],
+            num_heads=cfg["n_heads"], 
+            dropout=cfg["drop_rate_attn"], # NEW: dropout for multi-head attention
+            qkv_bias=cfg["qkv_bias"])
+        self.ff = FeedForward(cfg)
+        self.norm1 = LayerNorm(cfg["emb_dim"])
+        self.norm2 = LayerNorm(cfg["emb_dim"])
+        self.drop_shortcut = nn.Dropout(cfg["drop_rate_shortcut"]) # NEW: dropout for shortcut connections
+
+    def forward(self, x):
+        # Shortcut connection for attention block
+        shortcut = x
+        x = self.norm1(x)
+        x = self.att(x)  # Shape [batch_size, num_tokens, emb_size]
+        x = self.drop_shortcut(x)
+        x = x + shortcut  # Add the original input back
+
+        # Shortcut connection for feed-forward block
+        shortcut = x
+        x = self.norm2(x)
+        x = self.ff(x)
+        x = self.drop_shortcut(x)
+        x = x + shortcut  # Add the original input back
+
+        return x
+```
+
+* Use the drop_rate setting in GPTModel:
+
+```
+class GPTModel(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.tok_emb = nn.Embedding(cfg["vocab_size"], cfg["emb_dim"])
+        self.pos_emb = nn.Embedding(cfg["context_length"], cfg["emb_dim"])
+        self.drop_emb = nn.Dropout(cfg["drop_rate_emb"]) # NEW: dropout for embedding layers
+
+        self.trf_blocks = nn.Sequential(
+            *[TransformerBlock(cfg) for _ in range(cfg["n_layers"])])
+
+        self.final_norm = LayerNorm(cfg["emb_dim"])
+        self.out_head = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
+
+    def forward(self, in_idx):
+        batch_size, seq_len = in_idx.shape
+        tok_embeds = self.tok_emb(in_idx)
+        pos_embeds = self.pos_emb(torch.arange(seq_len, device=in_idx.device))
+        x = tok_embeds + pos_embeds  # Shape [batch_size, num_tokens, emb_size]
+        x = self.drop_emb(x)
+        x = self.trf_blocks(x)
+        x = self.final_norm(x)
+        logits = self.out_head(x)
+        return logits
+```
+
 ## Summary
+
+* **Layer normalization stabilizes training** by ensuring that each layer’s outputs have a consistent mean and variance.
+* Shortcut connections skip one or more layers by feeding the output of one layer directly to a deeper layer, which helps mitigate the vanishing gradient problem when training deep neural networks, such as LLMs.
+* Transformer blocks are a core structural component of GPT models, combining masked multi-head attention modules with fully connected feed forward networks that use the GELU activation function.
+* GPT models are LLMs with many repeated transformer blocks that have millions to billions of parameters.
+* GPT models come in various sizes, for example, 124, 345, 762, and 1,542 million parameters, which we can implement with the same GPTModel Python class.
+* The text-generation capability of a GPT-like LLM involves decoding output tensors into human-readable text by sequentially predicting one token at a time
+based on a given input context.
+* Without training, a GPT model generates incoherent text, which underscores the importance of model training for coherent text generation.
