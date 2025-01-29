@@ -166,6 +166,192 @@ Output text:
 
 ### 5.1.2 Calculating the text generation loss
 
+* The flow from input text to LLM generated text is outlined in the figure below:
+> 1. Given vocabulary of only 7 tokens {text : id}, map the input text to token ids.
+> 2. Passing the input token ids to the GPT model, obtain 7-dim probability row vector for each input token via softmax()
+> 3. Locate the index position with highest probability in each row via argmax().
+> 4. Obtain all predicted token ids as index positions with the highest probability.
+> 5. Map index position back to text via the inverse vocabulary.
+
+<img width="755" alt="image" src="https://github.com/user-attachments/assets/f5d4ae68-4f9d-4792-a8ef-2b390b99d096" />
+
+* **Hands-on**
+* **Code:** [code/run_test_section5.1.2.py](code/run_test_section5.1.2.py)
+
+```
+import tiktoken
+import torch
+from gpt_model import GPTModel
+from generate_text_sample import *
+from utility import text_to_token_ids, token_ids_to_text
+
+
+# Shorten context length from 1024 to 256
+GPT_CONFIG_124M = {
+    'vocab_size': 50257,        # Vocabulary size
+    'context_length': 256,     # Context length
+    'emb_dim': 768,             # Embedding dimension
+    'n_heads': 12,              # Number of attention heads
+    'n_layers': 12,             # Number of layers
+    'drop_rate': 0.1,           # Dropout rate
+    'qkv_bias': False,          # Query-Key-Value bias
+}
+
+torch.manual_seed(123)
+model = GPTModel(GPT_CONFIG_124M)
+model.eval()
+
+tokenizer = tiktoken.get_encoding("gpt2")
+
+# Two input examples with 3 token ids
+inputs = torch.tensor([[16833, 3626, 6100],   # ["every effort moves",
+                       [40,    1107, 588]])   #  "I really like"]
+# The targets
+targets = torch.tensor([[3626, 6100, 345  ],  # [" effort moves you",
+                        [1107,  588, 11311]]) #  " really like chocolate"]
+
+# Feed input to the model to obtain the probability of each token
+with torch.no_grad():
+    logits = model(inputs)
+
+# Probability of each token in vocabulary
+probas = torch.softmax(logits, dim=-1)
+print(probas)
+print(probas.shape)
+'''
+tensor([[[1.8852e-05, 1.5173e-05, 1.1687e-05,  ..., 2.2408e-05,
+          6.9776e-06, 1.8776e-05],
+         [9.1572e-06, 1.0062e-05, 7.8783e-06,  ..., 2.9089e-05,
+          6.0105e-06, 1.3568e-05],
+         [2.9873e-05, 8.8501e-06, 1.5740e-05,  ..., 3.5459e-05,
+          1.4094e-05, 1.3524e-05]],
+
+        [[1.2561e-05, 2.0537e-05, 1.4331e-05,  ..., 1.0387e-05,
+          3.4783e-05, 1.4237e-05],
+         [7.2733e-06, 1.7863e-05, 1.0565e-05,  ..., 2.1206e-05,
+          1.1390e-05, 1.5557e-05],
+         [2.9494e-05, 3.3606e-05, 4.1031e-05,  ..., 6.5252e-06,
+          5.8200e-05, 1.3697e-05]]])
+torch.Size([2, 3, 50257])
+'''
+
+# Apply argmax to get the token ids with highest probability
+token_ids = torch.argmax(probas, dim=-1, keepdim=True)
+print("Token IDs:\n", token_ids)
+
+'''
+Token IDs:
+ tensor([[[16657],[  339],[42826]],
+        [[49906],[29669],[41751]]])
+'''
+
+# Convert the token IDs back into text
+print(f"Targets batch 1: {token_ids_to_text(targets[0], tokenizer)}")
+print(f"Output batch 1:"
+      f" {token_ids_to_text(token_ids[0].flatten(), tokenizer)}")
+```
+
+* Output:
+```
+Targets batch 1:  effort moves you
+Output batch 1:  Armed heNetflix
+```
+
+* For each of the two input texts, print the initial softmax probability socres corresponding to the target tokens.
+
+```
+# Print the initial softmax probability scores
+# probas.shape: torch.Size([2, 3, 50257])
+#                          [text_idx, token_idx, vocab_id]
+text_idx = 0
+target_probas_1 = probas[text_idx, [0,1,2], targets[text_idx]]
+print("Text 1:", target_probas_1)
+
+text_idx = 1
+target_probas_2 = probas[text_idx, [0,1,2], targets[text_idx]]
+print("Text 2:", target_probas_1)
+```
+
+* The three target token ID probabilities below are low.
+```
+Text 1: tensor([7.4534e-05, 3.1060e-05, 1.1564e-05])
+Text 2: tensor([7.4534e-05, 3.1060e-05, 1.1564e-05])
+```
+* We want to maximize these values, making them close to a probability of of 1.
+
+* The goal of training an LLM is to maximize the likelihood of the correct token, which invoves increasing its probability relative to other tokens.
+
+<img width="753" alt="image" src="https://github.com/user-attachments/assets/2e1e6179-b8da-4be2-aab6-f29e9d0c3d3e" />
+
+* The next step is to calculate the loss. See step 4,5,6.
+
+<img width="645" alt="image" src="https://github.com/user-attachments/assets/f37f2c1b-143c-4741-932e-e6b94a4d4b23" />
+
+* In mathematical optimisation, it is easier to it is easier to maximize the logarithm of the probability score
+than the probability score itself.
+```
+# Compute logarithm of all token probabilities
+log_probas = torch.log(torch.cat((target_probas_1, target_probas_2)))
+print(log_probas)
+```
+
+* Output:
+```
+tensor([ -9.5043, -10.3796, -11.3676, -11.4798,  -9.7765, -12.2561])
+```
+
+* Following step 5, we combine these log prob. into a single score by computing the average.
+
+```
+# Compute the average of the score
+avg_log_probas = torch.mean(log_probas)
+print(avg_log_probas) 
+# tensor(-10.7940)
+```
+
+* The goal is to make this average log probability as large as possible by optimizing the model weights.
+* Due to the log, the largest possible value is 0, and we are currently far away from 0.
+* In deep learning, instead of maximizing the average log-probability, it's a standard convention to minimize the *negative* average log-probability value; in our case, instead of maximizing -10.7940 so that it approaches 0, in deep learning, we would minimize 10.7722 so that it approaches 0
+* The value negative of -10.7940, i.e., 10.7940, is also called cross-entropy loss in deep learning
+
+```
+# Compute the negative average of the score
+neg_avg_log_probas = avg_log_probas * -1
+print(neg_avg_log_probas)
+# tensor(10.7940)
+```
+
+* The loss we obtained is tensor(10.7940).
+
+* The whole process can be collapsed to use Pythoch's cross_entropy function.
+
+```
+# Logits have shape (batch_size, num_tokens, vocab_size)
+print("Logits shape:", logits.shape) # [2, 3, 50257
+
+# Targets have shape (batch_size, num_tokens)
+print("Targets shape:", targets.shape) # [2, 3]
+
+
+logits_flat = logits.flatten(0, 1)
+targets_flat = targets.flatten()
+
+print("Flattened logits:", logits_flat.shape) # [6, 50257]
+print("Flattened targets:", targets_flat.shape) # [6]
+
+loss = torch.nn.functional.cross_entropy(logits_flat, targets_flat)
+print(loss) # tensor(10.7940)
+```
+
+* Note that targets are the token IDs we want the LLM to generate.
+* logits are the unscaled model outputs before they enter the softmax function to obtain the probability score.
+
+> **Perplexity**
+> Perplexity measures how well the probability distribution predicted by the model matches the actual distribution of the words in the dataset.\
+> A lower perplexity indicates that the model predictions are closer to the actual distribution.\
+> `perplexity = torch.exp(loss)`, in the example, we obtain tensor(48726.6094).\
+> This translates to **the model being unsure about which among 48726 tokens in the vocabulary to generate the next token.**
+
 ### 5.1.3 Calculating the training and validation set losses
 
 ## 5.2 Training an LLM
