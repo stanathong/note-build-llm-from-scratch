@@ -10,7 +10,7 @@ This repo contains my study notes based exclusively from the book [Build A Large
 | **Chapter 2** Working with text data | [ch2/README.md](ch2/README.md) | **Completed** |
 | **Chapter 3** Coding attention mechanisms | [ch3/README.md](ch3/README.md) | **Completed** |
 | **Chapter 4** Implementing a GPT model from scratch to generate text | [ch4/README.md](ch4/README.md) | **Completed** |
-| **Chapter 5** Pretraining on unlabeled data | [ch5/README.md] | **Not started** |
+| **Chapter 5** Pretraining on unlabeled data | [ch5/README.md](ch5/README.md) | **In progress** |
 | **Chapter 6** Fine-tuning for classification | [ch6/README.md] | **Not started** |
 | **Chapter 7** Fine-tuning to follow instructions | [ch7/README.md] | **Not started** |
 | **Workshop** Building LLMs from the Ground Up: A 3-hour Coding Workshop | [workshop/README.md](workshop/README.md) | **Completed** |
