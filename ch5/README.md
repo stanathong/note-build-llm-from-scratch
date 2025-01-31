@@ -354,6 +354,139 @@ print(loss) # tensor(10.7940)
 
 ### 5.1.3 Calculating the training and validation set losses
 
+* This is started by preparing the training and validation datasets that will be used to train the LLM - by minimising the cross entropy loss.
+* The dataset we will used for training is [The Verdict](code/the-verdict.txt).
+
+* **Code:** [code/run_test_section5.1.3.py](code/run_test_section5.1.3.py)
+```
+import tiktoken
+
+# Load the text file
+file_path = "ch5/code/the-verdict.txt"
+with open(file_path, "r", encoding="utf-8") as file:
+    text_data = file.read()
+
+# Check the number of characters and tokens in the dataset
+total_characters = len(text_data)
+print("Characters:", total_characters)
+# Characters: 20479
+
+tokenizer = tiktoken.get_encoding("gpt2")
+total_tokens = len(tokenizer.encode(text_data))
+print("Tokens:", total_tokens)
+# Tokens: 5145
+```
+
+<img width="755" alt="image" src="https://github.com/user-attachments/assets/2d8c9883-dcc0-4b1e-954b-89a2827fc07b" />
+
+* In practice, it is beneficial to train an LLM with variable-length inputs to help the LLM to better generalize across different types of inputs when it is being used.
+
+* To split between training and validation, we define a train_ratio of 90%, in which 90% of the data are used for training and the remaining 10% as validation data.
+
+```
+# Splitting training and testing data
+train_ratio = 0.9
+split_idx = int(train_ratio * len(text_data))
+train_data = text_data[:split_idx]
+val_data = text_data[split_idx:]
+
+print("Train data:", len(train_data)) # Train data: 18431
+print("Validation data:", len(val_data)) # Validation data: 2048
+```
+
+> Recall the `<|endoftext|>` token is assigned to relatively large token ID.\
+> The BPE tokenizer which was used to train models such as GPT-2, GPT3
+> and the original model used in ChatGPT has a total vocab size of 50257,
+> with <|endoftext|> being assigned the largest token ID.
+
+
+```
+from data import create_dataloader_v1
+from config import GPT_CONFIG_124M
+
+# Adjust context_length
+GPT_CONFIG_124M["context_length"] = 256
+
+torch.manual_seed(123)
+
+train_loader = create_dataloader_v1(
+    train_data,
+    batch_size=2,
+    max_length=GPT_CONFIG_124M["context_length"],
+    stride=GPT_CONFIG_124M["context_length"],
+    drop_last=True,
+    shuffle=True,
+    num_workers=0
+)
+
+val_loader = create_dataloader_v1(
+    val_data,
+    batch_size=2,
+    max_length=GPT_CONFIG_124M["context_length"],
+    stride=GPT_CONFIG_124M["context_length"],
+    drop_last=True,
+    shuffle=True,
+    num_workers=0
+)
+```
+
+* Here, we use batch_size=2. In practice, we typically train LLMs on a larger batch size e.g. 1024.
+* As an optional check, we can iterate through the data loaders to ensure that they were created correctly.
+
+```
+print("Train loader:")
+for x, y in train_loader:
+    print(x.shape, y.shape)
+
+print("Validation loader:")
+for x, y in val_loader:
+    print(x.shape, y.shape)
+```
+
+* The output below shows that we have 9 training batches with 2 samples and 256 tokens each, we have 1 validation batch with 2 samples and 256 tokens each.
+```
+Train loader:
+torch.Size([2, 256]) torch.Size([2, 256])
+torch.Size([2, 256]) torch.Size([2, 256])
+torch.Size([2, 256]) torch.Size([2, 256])
+torch.Size([2, 256]) torch.Size([2, 256])
+torch.Size([2, 256]) torch.Size([2, 256])
+torch.Size([2, 256]) torch.Size([2, 256])
+torch.Size([2, 256]) torch.Size([2, 256])
+torch.Size([2, 256]) torch.Size([2, 256])
+torch.Size([2, 256]) torch.Size([2, 256])
+
+Validation loader:
+torch.Size([2, 256]) torch.Size([2, 256])
+```
+
+```
+if torch.backends.mps.is_available():
+    device = torch.device('mps')
+elif torch.cuda.is_available():
+    device = torch.device('cuda')
+else:
+    device = torch.device('cpu')
+
+print(f"Device selected: {device}")
+
+model = GPTModel(GPT_CONFIG_124M)
+model.to(device)
+with torch.no_grad():
+    train_loss = calc_loss_loader(train_loader, model, device)
+    val_loss = calc_loss_loader(val_loader, model, device)
+```
+
+```
+print("Training loss:", train_loss)
+print("Validation loss:", val_loss)
+
+# Training loss: 10.964091618855795
+# Validation loss: 10.993474960327148
+```
+
+* The loss values are relatively high because we have not trained the model yet.
+  
 ## 5.2 Training an LLM
 
 ## 5.3  Decoding strategies to control randomness
