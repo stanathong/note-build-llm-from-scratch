@@ -489,6 +489,205 @@ print("Validation loss:", val_loss)
   
 ## 5.2 Training an LLM
 
+* This is a typical training loop.
+<img width="514" alt="image" src="https://github.com/user-attachments/assets/f4bc06ef-472e-41f3-b289-81c8560e565a" />
+
+* **Hands-on**
+* Code: [code/train_model.py](code/train_model.py)
+
+```
+import torch
+from loss import calc_loss_batch, calc_loss_loader
+from utility import text_to_token_ids, token_ids_to_text
+from generate_text_sample import generate_text_simple
+
+def train_model_simple(model, train_loader, val_loader,
+                       optimizer, device, num_epochs,
+                       eval_freq, eval_iter, start_context, tokenizer):
+    train_losses, val_losses, track_tokens_seen = [], [], []
+    tokens_seen, global_step = 0, 1
+
+    for epoch in range(num_epochs):
+        model.train()
+        for input_batch, target_batch in train_loader:
+            # Resets loss gradeints from the previous batch iteration
+            optimizer.zero_grad()
+            loss = calc_loss_batch(
+                input_batch, target_batch, model, device
+            )
+            loss.backward()
+            optimizer.step()
+            tokens_seen += input_batch.numel()
+            global_step += 1
+
+            # Optional evaluation step
+            if global_step % eval_freq == 0:
+                train_loss, val_loss = evaluate_model(
+                    model, train_loader, val_loader, device, eval_iter
+                )
+                train_losses.append(train_loss)
+                val_losses.append(val_loss)
+                track_tokens_seen.append(tokens_seen)
+                print(f"Ep {epoch+1} (Step {global_step:06d}): "
+                      f"Train loss {train_loss:.3f}, "
+                      f"Val loss {val_loss:.3f}")
+                
+        # Print a simple text after each epoch
+        generate_and_print_sample(model, tokenizer, device, start_context)
+    
+    return train_losses, val_losses, track_tokens_seen
+
+# Calculate loss over the training and validation set
+def evaluate_model(model, train_loader, val_loader, device, eval_iter):
+    # Set to evaluation model with gradient tracking and dropout disable
+    model.eval()
+    with torch.no_grad():
+        train_loss = calc_loss_loader(train_loader, model, device, num_batches=eval_iter)
+        val_loss = calc_loss_loader(val_loader, model, device, num_batches=eval_iter)
+    model.train()
+    return train_loss, val_loss
+
+# Take a text snippet as input, converts to token IDs, feeds to LLM
+def generate_and_print_sample(model, tokenizer, device, start_context):
+    model.eval()
+    context_size = model.pos_emb.weight.shape[0]
+    encoded = text_to_token_ids(start_context, tokenizer).to(device)
+    with torch.no_grad():
+        token_ids = generate_text_simple(
+            model=model, idx=encoded,
+            max_new_tokens=50, context_size=context_size
+        )
+    decoded_text = token_ids_to_text(token_ids, tokenizer)
+    print(decoded_text.replace("\n", "")) # Compact print format
+    model.train()
+```
+
+> **AdamW**\
+> When training LLM, we chose AdamW optimiser over Adam, it improves the weight decay approach,
+> which aims to minimise model complexity and prevent overfitting by penalising larger weights.\
+> This adjustment enables AdamW to achieve more effective regularisation and better generalisation.
+
+
+* Train a GPT model instance for 10 epochs.
+* Code: [code/run_test_section5.2.py](code/run_test_section5.2.py)
+
+```
+import torch
+import tiktoken
+from data import create_dataloader_v1
+from config import GPT_CONFIG_124M
+from loss import calc_loss_loader
+from train_model import train_model_simple
+from gpt_model import GPTModel
+
+# Adjust context_length
+GPT_CONFIG_124M["context_length"] = 256
+
+...
+
+# 5.2 Train the LLM
+
+import time
+start_time = time.time()
+
+torch.manual_seed(123)
+model = GPTModel(GPT_CONFIG_124M)
+model.to(device)
+optimizer = torch.optim.AdamW(
+    model.parameters(),
+    lr=0.0004, weight_decay=0.1
+)
+
+num_epochs = 10
+train_losses, val_losses, tokens_seen = train_model_simple(
+    model, train_loader, val_loader, optimizer, device,
+    num_epochs=num_epochs, eval_freq=5, eval_iter=5,
+    start_context="Every effort moves you", tokenizer=tokenizer
+)
+
+end_time = time.time()
+execution_time_minutes = (end_time - start_time) / 60
+print(f"Training completed in {execution_time_minutes:.2f} minutes.")
+```
+
+* The output below shows that the training loss improve drastically.
+
+```
+Device selected: mps
+Ep 1 (Step 000005): Train loss 8.833, Val loss 8.888
+Ep 1 (Step 000010): Train loss 7.019, Val loss 7.465
+Every effort moves you,,,,,,,,,,,,.
+Ep 2 (Step 000015): Train loss 6.101, Val loss 6.693
+Every effort moves you, the, the of the, the, the, the.", the, the,,, the, and, the, of the, the, the, the, the, the, the, and, the,, the,
+Ep 3 (Step 000020): Train loss 5.746, Val loss 6.498
+Ep 3 (Step 000025): Train loss 5.814, Val loss 6.526
+Every effort moves you, and, and and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and, and,
+Ep 4 (Step 000030): Train loss 5.578, Val loss 6.918
+Ep 4 (Step 000035): Train loss 5.215, Val loss 6.454
+Every effort moves you, and I had to the of the of the of the of the of the of theisburn, and to to the of the of the of the of the of the of the of the of the of the of the of theis, and
+Ep 5 (Step 000040): Train loss 4.961, Val loss 6.437
+Ep 5 (Step 000045): Train loss 4.351, Val loss 6.316
+Every effort moves you know "
+Ep 6 (Step 000050): Train loss 3.742, Val loss 6.195
+Ep 6 (Step 000055): Train loss 3.517, Val loss 6.149
+Every effort moves you know it was his a little the picture.
+Ep 7 (Step 000060): Train loss 3.102, Val loss 6.099
+Every effort moves you know it was not that the picture.
+Ep 8 (Step 000065): Train loss 2.449, Val loss 6.127
+Ep 8 (Step 000070): Train loss 2.096, Val loss 6.178
+Every effort moves you know," was to have my dear, and he had been the picture."I turned, and I had been at my elbow and as his pictures, and down the room, and in
+Ep 9 (Step 000075): Train loss 1.772, Val loss 6.205
+Ep 9 (Step 000080): Train loss 1.423, Val loss 6.251
+Every effort moves you know," was one of the picture for nothing--I told Mrs."I looked--I looked up, I felt to see a smile behind his close grayish beard--as if he had the donkey. "There were days when I
+Ep 10 (Step 000085): Train loss 1.101, Val loss 6.240
+Ep 10 (Step 000090): Train loss 0.749, Val loss 6.294
+Every effort moves you?""Yes--quite insensible to the irony. She wanted him vindicated--and by me!""I didn't dabble back his head to look up at the sketch of the donkey. "There were days when I
+
+Training completed in 1.31 minutes.
+```
+
+* Plot the resulting training and validation loss
+* Code: [code/plot_losses.py](code/plot_losses.py)
+
+```
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
+
+def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
+    fig, ax1 = plt.subplots(figsize=(5,3))
+
+    # Plot training and validation loss against epochs
+    ax1.plot(epochs_seen, train_losses, label="Training loss")
+    ax1.plot(epochs_seen, val_losses, linestyle="-.", label="Validation loss")
+    ax1.set_xlabel("Epochs")
+    ax1.set_ylabel("Loss")
+    ax1.legend(loc="upper right")
+    ax1.xaxis.set_major_locator(MaxNLocator(integer=True))  # only show integer labels on x-axis
+
+    # Create a second x-axis for tokens seen
+    ax2 = ax1.twiny()  # Create a second x-axis that shares the same y-axis
+    ax2.plot(tokens_seen, train_losses, alpha=0)  # Invisible plot for aligning ticks
+    ax2.set_xlabel("Tokens seen")
+
+    fig.tight_layout()  # Adjust layout to make room
+    plt.savefig("loss-plot.pdf")
+    plt.show()
+```
+
+* By plotting loss:
+
+```
+epochs_tensor = torch.linspace(0, num_epochs, len(train_losses))
+plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
+```
+
+<img width="490" alt="image" src="https://github.com/user-attachments/assets/d00d374e-684b-4103-b1ba-b49092ec80e5" />
+
+* The plot has shown that the losses start to diverge past the second epoch.
+* This divergence and the fact that the validation loss is much larger than the training loss indicating that the model is overfitting to the training data.
+* The model memorizes the training data since we're working with a very small training data, and training the model for multple epochs.
+* **Usually, it's common to train a model on a much larger dataset for only one epoch.**
+
 ## 5.3  Decoding strategies to control randomness
 
 ### 5.3.1 Temperature scaling
