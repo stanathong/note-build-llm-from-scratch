@@ -690,7 +690,184 @@ plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
 
 ## 5.3  Decoding strategies to control randomness
 
+* After training, we put the model into evaluation mode to turn off random components such as dropout. We will transfer the model back to the CPU for inference as the model is quite small.
+* Code: [code/run_test_section5.3.py](code/run_test_section5.3.py)
+
+```
+model.to("cpu")
+model.eval()
+
+for i in range(3):
+    token_ids = generate_text_simple(
+        model, 
+        idx=text_to_token_ids("Every effort moves you", tokenizer), 
+        max_new_tokens=25, 
+        context_size=GPT_CONFIG_124M["context_length"])
+
+    print("Output text:\n", token_ids_to_text(token_ids, tokenizer))
+```
+
+* Output:
+```
+Output text:
+ Every effort moves you?"
+
+"Yes--quite insensible to the irony. She wanted him vindicated--and by me!"
+
+
+Output text:
+ Every effort moves you?"
+
+"Yes--quite insensible to the irony. She wanted him vindicated--and by me!"
+
+
+Output text:
+ Every effort moves you?"
+
+"Yes--quite insensible to the irony. She wanted him vindicated--and by me!"
+```
+
+* Give the same starting context "Every effort moves you", LLM will always generate the same outputs.
+* This is because the generated token is selected corresponding to the largest probability score among all tokens in the vocabulary.
+
 ### 5.3.1 Temperature scaling
+
+* **Temporal scaling is a technique that adds a probabilistic selection process** to the next token generation task.
+* Previously, we always sampled the token with the highest probability as the next token using `torch.argmax`, known as **greedy decoding**.
+* To generate text with more variety, we can **replace argmax with a function that samples from a probability distribution.**
+* This **probability distribution is the probability scores that LLM generate for each vocab at each token generation step**. 
+* To illustrate the **probabilistic sampling** for the next token generation process:
+
+```
+vocab = { 
+    "closer": 0,
+    "every": 1, 
+    "effort": 2, 
+    "forward": 3,
+    "inches": 4,
+    "moves": 5, 
+    "pizza": 6,
+    "toward": 7,
+    "you": 8,
+} 
+
+inverse_vocab = {v: k for k, v in vocab.item()}
+```
+
+* Assume the LLM is given the context "every effort moves you", and returns the following logits for the next token:
+
+```
+next_token_logits = torch.tensor(
+    [4.51, 0.89, -1.90, 6.75, 1.63, -1.62, -1.89, 6.28, 1.79]
+)
+```
+
+* The typical process is to **convert the logis into probabilities via the softmax** function.
+* It then obtain the token ID corresponding to the generated token via `argmax`.
+* We can then map the token back into text via the inverse vocabulary, inverse_vocab above.
+
+```
+probas = torch.softmax(next_token_logits, dim=0)
+next_token_id = torch.argmax(probas).item()
+print('probas:', probas)
+print('next_token_id:', next_token_id, 'text:', inverse_vocab[next_token_id])
+```
+
+* The code outputs the largest logit value, which is corresponding to the largest softmax probability score, which is the 3rd index.
+
+```
+probas: tensor([6.0907e-02, 1.6313e-03, 1.0019e-04, 5.7212e-01, 3.4190e-03, 1.3257e-04,
+        1.0120e-04, 3.5758e-01, 4.0122e-03])
+next_token_id: 3 text: forward
+```
+
+* **To implement a probabilistic sampling process, we can replace argmax with the multinomial function in Pytorch**
+
+```
+torch.manual_seed(123)
+next_token_id = torch.multinomial(probas, num_samples=1).item()
+print('next_token_id:', next_token_id, 'text:', inverse_vocab[next_token_id])
+```
+
+* Output:
+```
+next_token_id: 3 text: forward
+```
+
+* The multinomial function samples the next token proportional to its probability score.
+* "forward" is still the most likely token and will be selected by multinomial most of the time but not all the time.
+* This can be illustrated by repeating this sampling 1,000 times.
+
+```
+def print_sampled_tokens(probas):
+    torch.manual_seed(123) # reset the seed every time
+    sample = [torch.multinomial(probas, num_samples=1).item() for i in range(1_000)]
+    sampled_ids = torch.bincount(torch.tensor(sample))
+    for i, freq in enumerate(sampled_ids):
+        print(f"{freq} x {inverse_vocab[i]}")
+
+print_sampled_tokens(probas)
+```
+* The sampling output is
+
+```
+73 x closer
+0 x every
+0 x effort
+582 x forward
+2 x inches
+0 x moves
+0 x pizza
+343 x toward
+```
+
+* In summary, if we replace the argmax function with the multinomail function, the LLM would not always generate the same output.
+
+* We can **control the distribution and selection process via a concept called "temperature scaling"**.
+* Temperature scaling just **divides the logits** by a number greater than 0.
+
+```
+def softmax_with_temperature(logits, temperature):
+    scaled_logits = logits / temperature
+    return torch.softmax(scaled_logits, dim=0)
+```
+> **Note**\
+> Temperatures **greater than 1 result in more uniformly** distributed token probabilities.\
+> Temperatures **smaller than 1 result in more confident (sharper/more peaky)** distributed token probabilities.
+
+```
+# Plot graph with different temperatures
+# 1: original, 0.1: higher confidence, 5: lower confidence
+temperatures = [1, 0.1, 5]
+scaled_probs = [softmax_with_temperature(next_token_logits, T)
+                for T in temperatures]
+x = torch.arange(len(vocab))
+bar_width = 0.15
+fig, ax = plt.subplots(figsize=(5,3))
+for i, T in enumerate(temperatures):
+    rects = ax.bar(x + i * bar_width, scaled_probs[i],
+                   bar_width, label=f'Temperature = {T}')
+ax.set_ylabel('Probability')
+ax.set_xticks(x)
+ax.set_xticklabels(vocab.keys(), rotation=90)
+ax.legend()
+plt.tight_layout()
+plt.show()
+```
+
+<img width="488" alt="image" src="https://github.com/user-attachments/assets/f23c07df-3b4b-4f88-b16c-2113e50a2390" />
+
+
+> Temperature = 1 divides the logits by 1 before passing them to the softmax func-
+tion to compute the probability scores.\
+> Using a temperature of 1 is the same as not using any temperature scaling.\
+> In this case, **the tokens are selected with a probability equal to the original softmax** probability scores via the multinomial sampling function.\
+> For example, for the temperature setting 1, the token corresponding to “forward” would be selected about 60% of the time.
+> Applying very **small temperatures, such as 0.1, will result in sharper distributions**.\
+> For such case, the multinomial function selects the most likely token (here, "forward") almost 100% of the time, approaching the behavior of the argmax function.
+> A temperature of 5 results in a more uniform distribution where other tokens are selected more often.
+> With a higher temperature, this can add more variety to the generated texts but also more often results in nonsensical text. 
+
 
 ### 5.3.2 Top-k sampling
 
