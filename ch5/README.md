@@ -958,7 +958,182 @@ tensor([0.0615, 0.0000, 0.0000, 0.5775, 0.0000, 0.0000, 0.0000, 0.3610, 0.0000])
 
 ### 5.3.3 Modifying the text generation function
 
-### Excercise 5.1
+* Combine *temperature sampling and top-k sampling*:
+* Replace [code/generate_text_sample.py](code/generate_text_sample.py) with [code/generate.py](code/generate.py)
+
+```
+import torch
+
+def generate(model, idx, max_new_tokens, context_size, temperature=0.0, top_k=None, eos_id=None):
+
+    # For-loop is the same as before: Get logits, and only focus on last time step
+    for _ in range(max_new_tokens):
+        idx_cond = idx[:, -context_size:]
+        with torch.no_grad():
+            logits = model(idx_cond)
+        logits = logits[:, -1, :] # last token
+
+        # New: Filter logits with top_k sampling
+        if top_k is not None:
+            # Keep only top_k values
+            top_logits, _ = torch.topk(logits, top_k)
+            min_val = top_logits[:, -1]
+            logits = torch.where(
+                logits < min_val, 
+                torch.tensor(float("-inf")).to(logits.device), 
+                logits)
+        
+        # New: Apply temperature scaling
+        if temperature > 0.0:
+            logits = logits / temperature
+
+            # Apply softmax to get probabilities
+            probs = torch.softmax(logits, dim=-1)  # (batch_size, context_len)
+
+            # Sample from the distribution
+            idx_next = torch.multinomial(probs, num_samples=1)  # (batch_size, 1)
+
+        # Otherwise same as before: get idx of the vocab entry with the highest logits value
+        else:
+            idx_next = torch.argmax(logits, dim=-1, keepdim=True)  # (batch_size, 1)
+
+        if idx_next == eos_id:  # Stop generating early if end-of-sequence token is encountered and eos_id is specified
+            break
+
+        # Same as before: append sampled index to the running sequence
+        idx = torch.cat((idx, idx_next), dim=1)  # (batch_size, num_tokens+1)
+
+    return idx
+```
+
+* **Code:** [code/run_test_section5.3.3.py](code/run_test_section5.3.3.py)
+
+```
+import torch
+import tiktoken
+from data import create_dataloader_v1
+from config import GPT_CONFIG_124M
+from train_model import train_model_simple
+from gpt_model import GPTModel
+from plot_losses import plot_losses
+from generate_text_sample import *
+from utility import text_to_token_ids, token_ids_to_text
+from generate import *
+
+
+# Adjust context_length
+GPT_CONFIG_124M["context_length"] = 256
+
+if torch.backends.mps.is_available():
+    device = torch.device('mps')
+elif torch.cuda.is_available():
+    device = torch.device('cuda')
+else:
+    device = torch.device('cpu')
+
+print(f"Device selected: {device}")
+
+tokenizer = tiktoken.get_encoding("gpt2")
+
+# Load the text file
+file_path = "ch5/code/the-verdict.txt"
+with open(file_path, "r", encoding="utf-8") as file:
+    text_data = file.read()
+
+tokenizer = tiktoken.get_encoding("gpt2")
+total_tokens = len(tokenizer.encode(text_data))
+
+# Splitting training and testing data
+train_ratio = 0.9
+split_idx = int(train_ratio * len(text_data))
+train_data = text_data[:split_idx]
+val_data = text_data[split_idx:]
+
+torch.manual_seed(123)
+
+train_loader = create_dataloader_v1(
+    train_data,
+    batch_size=2,
+    max_length=GPT_CONFIG_124M["context_length"],
+    stride=GPT_CONFIG_124M["context_length"],
+    drop_last=True,
+    shuffle=True,
+    num_workers=0
+)
+
+val_loader = create_dataloader_v1(
+    val_data,
+    batch_size=2,
+    max_length=GPT_CONFIG_124M["context_length"],
+    stride=GPT_CONFIG_124M["context_length"],
+    drop_last=True,
+    shuffle=True,
+    num_workers=0
+)
+
+# 5.2 Train the LLM
+
+import time
+start_time = time.time()
+
+torch.manual_seed(123)
+model = GPTModel(GPT_CONFIG_124M)
+model.to(device)
+optimizer = torch.optim.AdamW(
+    model.parameters(),
+    lr=0.0004, weight_decay=0.1
+)
+
+num_epochs = 10
+train_losses, val_losses, tokens_seen = train_model_simple(
+    model, train_loader, val_loader, optimizer, device,
+    num_epochs=num_epochs, eval_freq=5, eval_iter=5,
+    start_context="Every effort moves you", tokenizer=tokenizer
+)
+
+end_time = time.time()
+execution_time_minutes = (end_time - start_time) / 60
+print(f"Training completed in {execution_time_minutes:.2f} minutes.")
+
+
+# 5.3.3 Text generation
+torch.manual_seed(123)
+
+model.to("cpu")
+model.eval()
+
+token_ids = generate(
+    model, 
+    idx=text_to_token_ids("Every effort moves you", tokenizer), 
+    max_new_tokens=25, 
+    context_size=GPT_CONFIG_124M["context_length"],
+    top_k=25,
+    temperature=1.4
+)
+
+print("Output text:\n", token_ids_to_text(token_ids, tokenizer))
+```
+
+```
+Output text:
+ Every effort moves you?"" Gisburn rather a--I felt nervous and left behind enough--she's the mant was that Mrs. G
+```
+* The output is different from the book!
+
+* The output from the book and the official's repo:
+    * The generated text is very different from the one we previously generated via the generate_simple function ("Every effort moves you know," was one of the axioms he laid...! ), which was a memorized passage from the training set.
+
+```
+Output text:
+ Every effort moves you stand to work on surprise, a one of us had gone with random-
+```
+
+### Exercise 5.1
+
+### Exercise 5.2
+
+### Exercise 5.3
+
 
 ## 5.4 Loading and saving model weights in PyTorch
 
