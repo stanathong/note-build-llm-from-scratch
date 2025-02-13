@@ -1134,8 +1134,95 @@ Output text:
 
 ### Exercise 5.3
 
-
 ## 5.4 Loading and saving model weights in PyTorch
+
+### Saving a Pytorch model
+
+* Save a model’s state_dict, a dictionary mapping each layer to its parameters.
+
+```
+torch.save(model.state_dict(), "model.pth")
+```
+
+* "model.pth" is the filename where the state_dict is saved.
+* The .pth extension is a convention for PyTorch files, though we could technically use any file extension.
+* After saving the model weights via the state_dict, we can load the model weights into a new GPTModel model instance:
+
+```
+model = GPTModel(GPT_CONFIG_124M)
+model.load_state_dict(torch.load("model.pth", map_location=device))
+model.eval()
+```
+
+* Optimizer, for example AdamW store additional parameters for each model weight.
+* AdamW uses historical data to adjust learning rates for each model parameter dynamically.
+* Without it, the optimizer resets, and the model may learn suboptimally or even fail to converge properly, which means it will lose the ability to generate coherent text.
+* Using torch.save, we can save both the model and optimizer state_dict contents:
+
+```
+torch.save({
+    "model_state_dict": model.state_dict(),
+    "optimizer_state_dict": optimizer.state_dict(),
+    },
+    "model_and_optimizer.pth"
+)
+```
+
+* We can restore the model and optimizer states by first loading the saved data via torch.load and then using the load_state_dict method:
+
+```
+checkpoint = torch.load("model_and_optimizer.pth", map_location=device)
+model = GPTModel(GPT_CONFIG_124M) model.load_state_dict(checkpoint["model_state_dict"])
+optimizer = torch.optim.AdamW(model.parameters(), lr=5e-4, weight_decay=0.1) optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+model.train();
+```
+
+* **Code:** [code/run_test_section5.3.3.py](code/run_test_section5.3.3.py)
+
+```
+# 5.3.4 Save and Load model
+
+print("Save the trained model")
+torch.save({
+    "model_state_dict": model.state_dict(),
+    "optimizer_state_dict": optimizer.state_dict(),
+    }, 
+    "model_and_optimizer.pth"
+)
+
+print("Load the trained model")
+
+checkpoint = torch.load("model_and_optimizer.pth", weights_only=True)
+
+model = GPTModel(GPT_CONFIG_124M)
+model.load_state_dict(checkpoint["model_state_dict"])
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=0.0005, weight_decay=0.1)
+optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+torch.manual_seed(123)
+
+print("Regenerate output again")
+
+model.to("cpu")
+model.eval()
+
+token_ids = generate(
+    model, 
+    idx=text_to_token_ids("Every effort moves you", tokenizer), 
+    max_new_tokens=25, 
+    context_size=GPT_CONFIG_124M["context_length"],
+    top_k=25,
+    temperature=1.4
+)
+
+print("Output text:\n", token_ids_to_text(token_ids, tokenizer))
+
+'''
+Output text:
+ Every effort moves you?"" Gisburn rather a--I felt nervous and left behind enough--she's the mant was that Mrs. G
+'''
+```
 
 ## 5.5 Loading pretrained weights from OpenAI
 
